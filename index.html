@@ -570,6 +570,7 @@
             <p><strong>Keys 1-4:</strong> Select squares • <strong>Tab:</strong> Cycle through objects</p>
             <p><strong>Arrow Keys:</strong> Move selected objects • <strong>S:</strong> Start simulation or return square to spawn</p>
             <p><strong>F:</strong> <span class="key-controls">Toggle fullscreen mode</span> • <strong>R:</strong> <span class="key-controls">Exit fullscreen mode</span> (or restart if game finished)</p>
+            <p><strong>+/-:</strong> <span class="key-controls">Increase/decrease moving obstacle speed</span></p>
             <p><strong>Delete/Backspace:</strong> Remove selected object</p>
             <p id="selection-status">No object selected</p>
         </div>
@@ -1536,2430 +1537,2526 @@
                }
            });
        }
-      // Update position of moving obstacles
-function updateMovingObstacles() {
-    obstacles.forEach(obstacle => {
-        if (obstacle.moving && obstacle.waypoints && obstacle.waypoints.length > 1) {
-            const waypoints = obstacle.waypoints;
-            const speed = obstacle.speed * 0.02;
+       // Update position of moving obstacles
+       function updateMovingObstacles() {
+           obstacles.forEach(obstacle => {
+               if (obstacle.moving && obstacle.waypoints && obstacle.waypoints.length > 1) {
+                   const waypoints = obstacle.waypoints;
+                   const speed = obstacle.speed * 0.02;
+                   
+                   if (obstacle.movementType === 'linear') {
+                       // Linear movement between waypoints
+                       const currentIndex = obstacle.currentWaypoint || 0;
+                       const nextIndex = (currentIndex + 1) % waypoints.length;
+                       
+                       const startPoint = waypoints[currentIndex];
+                       const endPoint = waypoints[nextIndex];
+                       
+                       // Update progress
+                       obstacle.progress = (obstacle.progress || 0) + speed;
+                       
+                       if (obstacle.progress >= 1) {
+                           // Move to next waypoint
+                           obstacle.currentWaypoint = nextIndex;
+                           obstacle.progress = 0;
+                       } else {
+                           // Interpolate position
+                           const newX = startPoint.x + (endPoint.x - startPoint.x) * obstacle.progress;
+                           const newY = startPoint.y + (endPoint.y - startPoint.y) * obstacle.progress;
+                           
+                           // Update position
+                           obstacle.x = newX;
+                           obstacle.y = newY;
+                           
+                           // Update DOM
+                           updateObstaclePosition(obstacle);
+                       }
+                   } else if (obstacle.movementType === 'circular') {
+                       // Circular movement using waypoints as radius control points
+                       const center = {
+                           x: 0,
+                           y: 0
+                       };
+                       
+                       // Calculate center as average of all waypoints
+                       waypoints.forEach(wp => {
+                           center.x += wp.x;
+                           center.y += wp.y;
+                       });
+                       
+                       center.x /= waypoints.length;
+                       center.y /= waypoints.length;
+                       
+                       // Calculate radius as average distance to center
+                       let radius = 0;
+                       waypoints.forEach(wp => {
+                           const dx = wp.x - center.x;
+                           const dy = wp.y - center.y;
+                           radius += Math.sqrt(dx * dx + dy * dy);
+                       });
+                       
+                       radius /= waypoints.length;
+                       
+                       // Update angle
+                       obstacle.angle = (obstacle.angle || 0) + speed;
+                       
+                       // Calculate new position
+                       const newX = center.x + Math.cos(obstacle.angle) * radius;
+                       const newY = center.y + Math.sin(obstacle.angle) * radius;
+                       
+                       // Update position
+                       obstacle.x = newX;
+                       obstacle.y = newY;
+                       
+                       // Update DOM
+                       updateObstaclePosition(obstacle);
+                   }
+               }
+           });
+       }
+       // Check collision with obstacle - updated to handle different types of obstacles
+       function checkObstacleCollision(state, obstacle) {
+            if (state.isExploding || state.isKilled) return false;
             
-            if (obstacle.movementType === 'linear') {
-                // Linear movement between waypoints
-                const currentIndex = obstacle.currentWaypoint || 0;
-                const nextIndex = (currentIndex + 1) % waypoints.length;
-                
-                const startPoint = waypoints[currentIndex];
-                const endPoint = waypoints[nextIndex];
-                
-                // Update progress
-                obstacle.progress = (obstacle.progress || 0) + speed;
-                
-                if (obstacle.progress >= 1) {
-                    // Move to next waypoint
-                    obstacle.currentWaypoint = nextIndex;
-                    obstacle.progress = 0;
-                } else {
-                    // Interpolate position
-                    const newX = startPoint.x + (endPoint.x - startPoint.x) * obstacle.progress;
-                    const newY = startPoint.y + (endPoint.y - startPoint.y) * obstacle.progress;
-                    
-                    // Update position
-                    obstacle.x = newX;
-                    obstacle.y = newY;
-                    
-                    // Update DOM
-                    updateObstaclePosition(obstacle);
+            let hasCollided = false;
+            
+            if (obstacle.shape === 'rectangle') {
+                // Rectangular collision detection
+                if (
+                    state.x < obstacle.x + obstacle.width &&
+                    state.x + state.width > obstacle.x &&
+                    state.y < obstacle.y + obstacle.height &&
+                    state.y + state.height > obstacle.y
+                ) {
+                    hasCollided = true;
                 }
-            } else if (obstacle.movementType === 'circular') {
-                // Circular movement using waypoints as radius control points
+            } else if (obstacle.shape === 'circle') {
+                // Circle collision detection
+                const squareCenter = {
+                    x: state.x + state.width / 2,
+                    y: state.y + state.height / 2
+                };
+                
+                const obstacleCenter = {
+                    x: obstacle.x + obstacle.width / 2,
+                    y: obstacle.y + obstacle.height / 2
+                };
+                
+                const radius = obstacle.width / 2; // For circles, width = height
+                
+                // Calculate distance between centers
+                const dx = squareCenter.x - obstacleCenter.x;
+                const dy = squareCenter.y - obstacleCenter.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                // Check if the square's bounding rectangle intersects the circle
+                if (distance < radius + Math.max(state.width, state.height) / 2) {
+                    hasCollided = true;
+                }
+            }
+            
+            if (hasCollided) {
+                // Get centers
+                const centerX = state.x + state.width / 2;
+                const centerY = state.y + state.height / 2;
+                const obstacleCenterX = obstacle.x + obstacle.width / 2;
+                const obstacleCenterY = obstacle.y + obstacle.height / 2;
+                
+                // Calculate collision point
+                const collisionX = (centerX + obstacleCenterX) / 2;
+                const collisionY = (centerY + obstacleCenterY) / 2;
+                
+                // Special handling for breakable obstacles
+                if (obstacle.type === 'breakable') {
+                    breakObstacle(obstacle, collisionX, collisionY);
+                    
+                    // Create collision effect
+                    createCollisionEffect(
+                        collisionX, 
+                        collisionY, 
+                        state.shadow, 
+                        obstacle.color
+                    );
+                    
+                    // Don't bounce if the obstacle was destroyed (durability <= 0)
+                    if (obstacle.durability <= 0) {
+                        return true;
+                    }
+                } else {
+                    // Create collision effect for normal obstacles
+                    createCollisionEffect(
+                        collisionX, 
+                        collisionY, 
+                        state.shadow, 
+                        obstacle.color
+                    );
+                }
+                
+                // Determine which side was hit (for proper reflection)
+                const dx = centerX - obstacleCenterX;
+                const dy = centerY - obstacleCenterY;
+                
+                if (obstacle.shape === 'rectangle') {
+                    // Calculate the obstacle's aspect ratio to determine reflection behavior
+                    const aspectRatio = obstacle.width / obstacle.height;
+                    
+                    // Since the obstacle is typically wide and flat, 
+                    // prioritize vertical reflection if collision occurs near the top/bottom edges
+                    if (Math.abs(dy) * aspectRatio > Math.abs(dx)) {
+                        // Vertical collision (top/bottom of obstacle)
+                        state.direction.y *= -1;
+                        
+                        // Adjust position to prevent sticking
+                        if (dy > 0) {
+                            state.y = obstacle.y + obstacle.height;
+                        } else {
+                            state.y = obstacle.y - state.height;
+                        }
+                    } else {
+                        // Horizontal collision (sides of obstacle)
+                        state.direction.x *= -1;
+                        
+                        // Adjust position to prevent sticking
+                        if (dx > 0) {
+                            state.x = obstacle.x + obstacle.width;
+                        } else {
+                            state.x = obstacle.x - state.width;
+                        }
+                    }
+                } else if (obstacle.shape === 'circle') {
+                    // For circular obstacles, reflect based on angle of collision
+                    // Calculate normalized vector from circle center to square center
+                    const length = Math.sqrt(dx * dx + dy * dy);
+                    const nx = dx / length;
+                    const ny = dy / length;
+                    
+                    // Reflect the direction vector based on normal
+                    // For 45-degree-restricted movement, we need to reset to diagonal directions
+                    if (Math.abs(nx) > Math.abs(ny)) {
+                        // Horizontal component dominates, flip x
+                        state.direction.x *= -1;
+                    } else {
+                        // Vertical component dominates, flip y
+                        state.direction.y *= -1;
+                    }
+                    
+                    // Push the square out of the circle to prevent sticking
+                    state.x = obstacleCenterX + nx * (obstacle.width / 2 + state.width / 2);
+                    state.y = obstacleCenterY + ny * (obstacle.width / 2 + state.height / 2);
+                }
+                
+                // Add pulse effect to square without rotation
+                state.element.style.transition = 'transform 0.2s ease';
+                state.element.style.transform = 'scale(1.2)';
+                setTimeout(() => {
+                    state.element.style.transform = 'none';
+                }, 200);
+                
+                // Also add a quick flash to the obstacle
+                obstacle.element.style.transition = 'box-shadow 0.2s ease';
+                obstacle.element.style.boxShadow = `0 0 20px ${state.shadow}`;
+                setTimeout(() => {
+                    if (obstacle.element.parentNode) { // Check if still exists
+                        if (obstacle.type === 'breakable') {
+                            obstacle.element.style.boxShadow = '0 0 15px rgba(255, 140, 0, 0.6)';
+                        } else if (obstacle.type === 'moving') {
+                            obstacle.element.style.boxShadow = '0 0 15px rgba(128, 0, 128, 0.6)';
+                        } else {
+                            obstacle.element.style.boxShadow = 'none';
+                        }
+                    }
+                }, 200);
+                
+                return true;
+            }
+            
+            return false;
+        }
+        
+        // Check collision with frame
+        function checkFrameCollision(state) {
+            if (state.isExploding || state.isKilled) return false;
+            
+            const frameWidth = frame.clientWidth;
+            const frameHeight = frame.clientHeight;
+            let hasCollided = false;
+            
+            // Check horizontal boundaries with proper reflection
+            if (state.x <= 0) {
+                state.x = 0;
+                state.direction.x *= -1;
+                hasCollided = true;
+            } else if (state.x + state.width >= frameWidth) {
+                state.x = frameWidth - state.width;
+                state.direction.x *= -1;
+                hasCollided = true;
+            }
+            
+            // Check vertical boundaries with proper reflection
+            if (state.y <= 0) {
+                state.y = 0;
+                state.direction.y *= -1;
+                hasCollided = true;
+            } else if (state.y + state.height >= frameHeight) {
+                state.y = frameHeight - state.height;
+                state.direction.y *= -1;
+                hasCollided = true;
+            }
+            
+            // Create wall collision effect
+            if (hasCollided) {
+                createCollisionEffect(
+                    state.x + state.width/2,
+                    state.y + state.height/2,
+                    state.shadow,
+                    'rgba(0, 0, 0, 0.8)'
+                );
+                
+                // Add pulse effect to the square but without rotation
+                state.element.style.transition = 'transform 0.2s ease';
+                state.element.style.transform = 'scale(1.2)';
+                setTimeout(() => {
+                    state.element.style.transform = 'none';
+                }, 200);
+            }
+            
+            return hasCollided;
+        }
+        // Check collision with block
+        function checkBlockCollision(state, block) {
+            if (state.isExploding || state.isKilled) return false;
+            
+            // Check for collision with block
+            if (
+                state.x < block.x + block.width &&
+                state.x + state.width > block.x &&
+                state.y < block.y + block.height &&
+                state.y + state.height > block.y
+            ) {
+                // Handle based on block type
+                switch (block.type) {
+                    case 'teleporter':
+                        teleportSquare(state, block);
+                        break;
+                    case 'killer':
+                        // Small delay before explosion
+                        setTimeout(() => {
+                            createExplosion(state);
+                        }, 200);
+                        break;
+                    case 'transformer':
+                        transformSquare(state);
+                        break;
+                    case 'finishline':
+                        // Show finish message after a small delay
+                        showFinish();
+                        break;
+                }
+                
+                return true;
+            }
+            
+            return false;
+        }
+
+        // Check if item is collided with
+        function checkItemCollision(state, item) {
+            if (state.isExploding || state.isKilled) return false;
+            
+            // Check for collision with item
+            if (
+                state.x < item.x + item.size &&
+                state.x + state.width > item.x &&
+                state.y < item.y + item.size &&
+                state.y + state.height > item.y
+            ) {
+                // Handle based on item type
+                switch (item.type) {
+                    case 'knife':
+                        if (!state.hasKnife && state.knifePickupCooldown <= 0) {
+                            giveKnife(state, item);
+                        }
+                        break;
+                }
+                
+                return true;
+            }
+            
+            return false;
+        }
+        
+        // Check collision between squares with proper reflection
+        function checkSquareCollisions() {
+            for (let i = 0; i < squareStates.length; i++) {
+                for (let j = i + 1; j < squareStates.length; j++) {
+                    const square1 = squareStates[i];
+                    const square2 = squareStates[j];
+                    
+                    // Skip if either square is exploding or killed
+                    if (square1.isExploding || square1.isKilled || 
+                        square2.isExploding || square2.isKilled) continue;
+                    
+                    // Check for collision
+                    if (
+                        square1.x < square2.x + square2.width &&
+                        square1.x + square1.width > square2.x &&
+                        square1.y < square2.y + square2.height &&
+                        square1.y + square1.height > square2.y
+                    ) {
+                        // Calculate collision point for knife dropping
+                        const center1X = square1.x + square1.width / 2;
+                        const center1Y = square1.y + square1.height / 2;
+                        const center2X = square2.x + square2.width / 2;
+                        const center2Y = square2.y + square2.height / 2;
+                        const collisionX = (center1X + center2X) / 2;
+                        const collisionY = (center1Y + center2Y) / 2;
+                        
+                        // Check if any square has a knife
+                        if (square1.hasKnife) {
+                            // Square 1 has knife, kill square 2
+                            createExplosion(square2);
+                            
+                            // Drop the knife at the collision point
+                            const knifeSize = parseInt(itemSizeInput.value) || KNIFE_SIZE;
+                            createItem(
+                                collisionX - (knifeSize / 2),
+                                collisionY - (knifeSize / 2),
+                                'knife',
+                                knifeSize
+                            );
+                            
+                            // Square 1 no longer has knife - restore original size and image
+                            square1.hasKnife = false;
+                            square1.element.classList.remove('has-knife');
+                            square1.knifePickupCooldown = KNIFE_PICKUP_COOLDOWN;
+                            
+                            // Reset size based on whether it's small or not
+                            if (square1.isSmall) {
+                                square1.width = SMALL_SQUARE_SIZE;
+                                square1.height = SMALL_SQUARE_SIZE;
+                            } else {
+                                square1.width = NORMAL_SQUARE_SIZE;
+                                square1.height = NORMAL_SQUARE_SIZE;
+                            }
+                            
+                            // Reset original image
+                            square1.element.style.backgroundImage = `url(${square1.image})`;
+                            
+                            // Update square size
+                            updateSquareSize(square1);
+                            
+                            return; // Skip regular collision handling
+                        } else if (square2.hasKnife) {
+                            // Square 2 has knife, kill square 1
+                            createExplosion(square1);
+                            
+                            // Drop the knife at the collision point
+                            const knifeSize = parseInt(itemSizeInput.value) || KNIFE_SIZE;
+                            createItem(
+                                collisionX - (knifeSize / 2),
+                                collisionY - (knifeSize / 2),
+                                'knife',
+                                knifeSize
+                            );
+                            
+                            // Square 2 no longer has knife - restore original size and image
+                            square2.hasKnife = false;
+                            square2.element.classList.remove('has-knife');
+                            square2.knifePickupCooldown = KNIFE_PICKUP_COOLDOWN;
+                            
+                            // Reset size based on whether it's small or not
+                            if (square2.isSmall) {
+                                square2.width = SMALL_SQUARE_SIZE;
+                                square2.height = SMALL_SQUARE_SIZE;
+                            } else {
+                                square2.width = NORMAL_SQUARE_SIZE;
+                                square2.height = NORMAL_SQUARE_SIZE;
+                            }
+                            
+                            // Reset original image
+                            square2.element.style.backgroundImage = `url(${square2.image})`;
+                            
+                            // Update square size
+                            updateSquareSize(square2);
+                            
+                            return; // Skip regular collision handling
+                        }
+                        
+                        // No knife, proceed with normal collision
+                        
+                        // Create collision effect
+                        createCollisionEffect(collisionX, collisionY, square1.shadow, square2.shadow);
+                        
+                        // Calculate collision angle
+                        const dx = center2X - center1X;
+                        const dy = center2Y - center1Y;
+                        
+                        // Determine collision angle (which diagonal)
+                        // Since we're restricted to 45° angles, we need to find which diagonal the collision happened on
+                        
+                        // Implement reflective collision based on which side was hit
+                        // This maintains diagonal movement while reflecting properly
+                        if (Math.abs(dx) > Math.abs(dy)) {
+                            // Horizontal collision predominant - reflect x directions
+                            square1.direction.x *= -1;
+                            square2.direction.x *= -1;
+                        } else {
+                            // Vertical collision predominant - reflect y directions
+                            square1.direction.y *= -1;
+                            square2.direction.y *= -1;
+                        }
+                        
+                        // Move squares slightly apart to prevent sticking
+                        if (dx > 0) {
+                            square1.x -= 1;
+                            square2.x += 1;
+                        } else {
+                            square1.x += 1;
+                            square2.x -= 1;
+                        }
+                        
+                        if (dy > 0) {
+                            square1.y -= 1;
+                            square2.y += 1;
+                        } else {
+                            square1.y += 1;
+                            square2.y -= 1;
+                        }
+                        
+                        // Add pulse effect to both squares without rotation
+                        [square1.element, square2.element].forEach(element => {
+                            element.style.transition = 'transform 0.2s ease';
+                            element.style.transform = 'scale(1.2)';
+                            setTimeout(() => {
+                                element.style.transform = 'none';
+                            }, 200);
+                        });
+                    }
+                }
+            }
+        }
+        
+        // Animation loop
+        function animate() {
+            frameCount++;
+            
+            // Don't animate if game is finished
+            if (isGameFinished) {
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+                return;
+            }
+            
+            // Update moving obstacles
+            updateMovingObstacles();
+            
+            // Check if any square is trapped between obstacles
+            if (frameCount % 5 === 0) { // Only check every 5 frames to save CPU
+                checkSquareTrapped();
+            }
+            
+            // Update positions
+            squareStates.forEach(state => {
+                // Skip if square is exploding, killed, or being dragged
+                if (state.isExploding || state.isKilled || (selectedSquare === state && isDragging)) {
+                    return;
+                }
+                
+                // Decrease teleport cooldown
+                if (state.teleportCooldown > 0) {
+                    state.teleportCooldown--;
+                }
+                
+                // Decrease knife pickup cooldown
+                if (state.knifePickupCooldown > 0) {
+                    state.knifePickupCooldown -= 16; // Approximately 16ms per frame at 60fps
+                }
+                
+                // Move square
+                state.x += state.direction.x * state.speed;
+                state.y += state.direction.y * state.speed;
+                
+                // Check collisions in order
+                let hasCollided = false;
+                
+                // 1. Check block collisions first (special effects)
+                for (let i = 0; i < blocks.length; i++) {
+                    if (checkBlockCollision(state, blocks[i])) {
+                        hasCollided = true;
+                        break;
+                    }
+                }
+                
+                // 2. Check item collisions
+                if (!hasCollided) {
+                    for (let i = 0; i < items.length; i++) {
+                        if (checkItemCollision(state, items[i])) {
+                            hasCollided = true;
+                            break;
+                        }
+                    }
+                }
+                
+                // 3. If no block or item collision, check obstacles and walls
+                if (!hasCollided) {
+                    // Check obstacle collisions (bounce or break)
+                    for (let i = 0; i < obstacles.length; i++) {
+                        if (checkObstacleCollision(state, obstacles[i])) {
+                            hasCollided = true;
+                            break;
+                        }
+                    }
+                    
+                    // Check frame collision (bounce)
+                    if (!hasCollided) {
+                        checkFrameCollision(state);
+                    }
+                }
+                
+                // Create trails
+                createTrail(state);
+                
+                // Update DOM
+                updateSquarePosition(state);
+            });
+            
+            // Check collisions between squares
+            checkSquareCollisions();
+            
+            // Continue animation
+            animationId = requestAnimationFrame(animate);
+        }
+        
+        // Create a new obstacle
+        function createObstacle(x, y) {
+            // Get options for the new obstacle
+            const width = parseInt(obstacleWidthInput.value) || 70;
+            const height = parseInt(obstacleHeightInput.value) || 10;
+            const color = obstacleColorInput.value || '#000000';
+            const opacity = parseFloat(obstacleOpacityInput.value) || 0.8;
+            const shape = obstacleShapeInput.value || 'rectangle';
+            
+            // Create DOM element
+            const obstacleElement = document.createElement('div');
+            obstacleElement.classList.add('obstacle');
+            obstacleElement.style.width = `${width}px`;
+            obstacleElement.style.height = `${height}px`;
+            
+            // Set color with opacity
+            const rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacity})`;
+            obstacleElement.style.backgroundColor = rgbaColor;
+            
+            // Position at cursor
+            obstacleElement.style.left = `${x - width/2}px`;
+            obstacleElement.style.top = `${y - height/2}px`;
+            
+            // Apply border radius for circle shape
+            if (shape === 'circle') {
+                obstacleElement.style.borderRadius = '50%';
+            } else {
+                obstacleElement.style.borderRadius = '2px';
+            }
+            
+            // Add delete button
+            const deleteBtn = document.createElement('div');
+            deleteBtn.classList.add('obstacle-delete');
+            deleteBtn.textContent = '×';
+            obstacleElement.appendChild(deleteBtn);
+            
+            // Add to frame
+            frame.appendChild(obstacleElement);
+            
+            // Create obstacle state object
+            const newObstacle = {
+                element: obstacleElement,
+                x: x - width/2,
+                y: y - height/2,
+                width: width,
+                height: height,
+                shape: shape,
+                color: rgbaColor,
+                type: 'normal',
+                durability: 3 // Default durability even for normal obstacles
+            };
+            
+            // Add to obstacles array
+            obstacles.push(newObstacle);
+            
+            // Setup interaction events
+            setupObstacleInteraction(obstacleElement, newObstacle);
+            
+            return newObstacle;
+        }
+        
+        // Create a breakable obstacle
+        function createBreakableObstacle(x, y) {
+            // Get options for the new obstacle
+            const width = parseInt(obstacleWidthInput.value) || 70;
+            const height = parseInt(obstacleHeightInput.value) || 10;
+            const shape = obstacleShapeInput.value || 'rectangle';
+            const durability = parseInt(obstacleDurabilityInput.value) || 3;
+            
+            // Create DOM element
+            const obstacleElement = document.createElement('div');
+            obstacleElement.classList.add('obstacle', 'breakable');
+            obstacleElement.style.width = `${width}px`;
+            obstacleElement.style.height = `${height}px`;
+            
+            // Position at cursor
+            obstacleElement.style.left = `${x - width/2}px`;
+            obstacleElement.style.top = `${y - height/2}px`;
+            
+            // Apply border radius for circle shape
+            if (shape === 'circle') {
+                obstacleElement.style.borderRadius = '50%';
+            } else {
+                obstacleElement.style.borderRadius = '2px';
+            }
+            
+            // Add durability indicator
+            obstacleElement.setAttribute('data-durability', durability);
+            
+            // Add delete button
+            const deleteBtn = document.createElement('div');
+            deleteBtn.classList.add('obstacle-delete');
+            deleteBtn.textContent = '×';
+            obstacleElement.appendChild(deleteBtn);
+            
+            // Add to frame
+            frame.appendChild(obstacleElement);
+            
+            // Create obstacle state object
+            const newObstacle = {
+                element: obstacleElement,
+                x: x - width/2,
+                y: y - height/2,
+                width: width,
+                height: height,
+                shape: shape,
+                color: 'rgba(150, 75, 0, 0.8)',
+                type: 'breakable',
+                durability: durability
+            };
+            
+            // Add to obstacles array
+            obstacles.push(newObstacle);
+            
+            // Setup interaction events
+            setupObstacleInteraction(obstacleElement, newObstacle);
+            
+            return newObstacle;
+        }
+        // Create a moving obstacle
+        function createMovingObstacle(x, y) {
+            // Get options for the new obstacle
+            const width = parseInt(obstacleWidthInput.value) || 70;
+            const height = parseInt(obstacleHeightInput.value) || 10;
+            const shape = obstacleShapeInput.value || 'rectangle';
+            
+            // Create DOM element
+            const obstacleElement = document.createElement('div');
+            obstacleElement.classList.add('obstacle', 'moving');
+            obstacleElement.style.width = `${width}px`;
+            obstacleElement.style.height = `${height}px`;
+            
+            // Position at cursor
+            obstacleElement.style.left = `${x - width/2}px`;
+            obstacleElement.style.top = `${y - height/2}px`;
+            
+            // Apply border radius for circle shape
+            if (shape === 'circle') {
+                obstacleElement.style.borderRadius = '50%';
+            } else {
+                obstacleElement.style.borderRadius = '2px';
+            }
+            
+            // Add delete button
+            const deleteBtn = document.createElement('div');
+            deleteBtn.classList.add('obstacle-delete');
+            deleteBtn.textContent = '×';
+            obstacleElement.appendChild(deleteBtn);
+            
+            // Add to frame
+            frame.appendChild(obstacleElement);
+            
+            // Create obstacle state object
+            const newObstacle = {
+                element: obstacleElement,
+                x: x - width/2,
+                y: y - height/2,
+                width: width,
+                height: height,
+                shape: shape,
+                color: 'rgba(75, 0, 130, 0.8)',
+                type: 'moving',
+                moving: true,
+                waypoints: [],
+                currentWaypoint: 0,
+                movementType: currentMovementType,
+                speed: parseInt(movingSpeedInput.value) || 3,
+                progress: 0
+            };
+            
+            // Add to obstacles array
+            obstacles.push(newObstacle);
+            
+            // Setup interaction events
+            setupObstacleInteraction(obstacleElement, newObstacle);
+            
+            return newObstacle;
+        }
+        
+        // Create a block with special properties
+        function createBlock(x, y, type) {
+            // Get options for the new block
+            const width = parseInt(blockWidthInput.value) || 50;
+            const height = parseInt(blockHeightInput.value) || 50;
+            
+            // Create DOM element
+            const blockElement = document.createElement('div');
+            blockElement.classList.add('block');
+            blockElement.classList.add(type);
+            blockElement.style.width = `${width}px`;
+            blockElement.style.height = `${height}px`;
+            
+            // Position at cursor
+            blockElement.style.left = `${x - width/2}px`;
+            blockElement.style.top = `${y - height/2}px`;
+            
+            // Add delete button
+            const deleteBtn = document.createElement('div');
+            deleteBtn.classList.add('block-delete');
+            deleteBtn.textContent = '×';
+            blockElement.appendChild(deleteBtn);
+            
+            // Add to frame
+            frame.appendChild(blockElement);
+            
+            // Create block state object
+            const newBlock = {
+                element: blockElement,
+                x: x - width/2,
+                y: y - height/2,
+                width: width,
+                height: height,
+                type: type
+            };
+            
+            // Add to blocks array
+            blocks.push(newBlock);
+            
+            // Setup interaction events
+            setupBlockInteraction(blockElement, newBlock);
+            
+            return newBlock;
+        }
+
+        // Create an item (knife, etc.)
+        function createItem(x, y, type, size = KNIFE_SIZE) {
+            // Create DOM element
+            const itemElement = document.createElement('div');
+            itemElement.classList.add('item');
+            itemElement.classList.add(type);
+            itemElement.style.width = `${size}px`;
+            itemElement.style.height = `${size}px`;
+            
+            // Position at cursor
+            itemElement.style.left = `${x}px`;
+            itemElement.style.top = `${y}px`;
+            
+            // Add delete button
+            const deleteBtn = document.createElement('div');
+            deleteBtn.classList.add('item-delete');
+            deleteBtn.textContent = '×';
+            itemElement.appendChild(deleteBtn);
+            
+            // Add to frame
+            frame.appendChild(itemElement);
+            
+            // Create item state object
+            const newItem = {
+                element: itemElement,
+                x: x,
+                y: y,
+                size: size,
+                type: type
+            };
+            
+            // Add to items array
+            items.push(newItem);
+            
+            // Setup interaction events
+            setupItemInteraction(itemElement, newItem);
+            
+            return newItem;
+        }
+        
+        // Setup a waypoint for moving obstacles
+        function setupWaypoint(element, waypoint, index) {
+            // Delete button
+            const deleteBtn = document.createElement('div');
+            deleteBtn.classList.add('waypoint-delete');
+            deleteBtn.textContent = '×';
+            element.appendChild(deleteBtn);
+            
+            // Click to select
+            element.addEventListener('click', (e) => {
+                if (e.target === deleteBtn) return;
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+    
+                // Deselect any selected object
+                deselectAllObjects();
+    
+                // Select this waypoint
+                selectedWaypoint = waypoint;
+                element.classList.add('selected');
+                deleteBtn.style.display = 'flex';
+    
+                updateSelectionStatus();
+            });
+            
+            // Delete button click
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                
+                // Remove from DOM
+                element.remove();
+                
+                // Remove from array
+                const wpIndex = movingWaypoints.indexOf(waypoint);
+                if (wpIndex > -1) {
+                    movingWaypoints.splice(wpIndex, 1);
+                }
+                
+                // Update obstacle waypoints if this is for a specific obstacle
+                if (currentMovingObstacle) {
+                    currentMovingObstacle.waypoints = movingWaypoints.slice();
+                }
+                
+                // Clear selection if this was the selected waypoint
+                if (selectedWaypoint === waypoint) {
+                    selectedWaypoint = null;
+                    updateSelectionStatus();
+                }
+                
+                // Update path indicator
+                updatePathIndicator();
+            });
+            
+            // Drag functionality
+            element.addEventListener('mousedown', (e) => {
+                if (e.target === deleteBtn) return;
+                
+                // Select this waypoint if not already selected
+                if (selectedWaypoint !== waypoint) {
+                    // Deselect any selected object
+                    deselectAllObjects();
+                    // Select this waypoint
+                    selectedWaypoint = waypoint;
+                    element.classList.add('selected');
+                    deleteBtn.style.display = 'flex';
+                    
+                    updateSelectionStatus();
+                }
+                
+                // Start dragging
+                isDragging = true;
+                dragOffsetX = e.clientX - waypoint.x;
+                dragOffsetY = e.clientY - waypoint.y;
+                
+                // Prevent default behavior
+                e.preventDefault();
+            });
+        }
+        // Update path indicator for moving obstacles
+        function updatePathIndicator() {
+            // Remove existing path indicator
+            if (pathIndicator) {
+                pathIndicator.remove();
+                pathIndicator = null;
+            }
+            
+            // If fewer than 2 waypoints, no path to show
+            if (movingWaypoints.length < 2) return;
+            
+            // Create new path indicator
+            pathIndicator = document.createElement('div');
+            pathIndicator.classList.add('moving-path-indicator');
+            
+            if (currentMovementType === 'linear') {
+                // For linear movement, draw a polygon connecting all waypoints
+                const points = movingWaypoints.map(wp => `${wp.x},${wp.y}`).join(' ');
+                pathIndicator.style.clipPath = `polygon(${points})`;
+                
+                // Calculate bounding box
+                let minX = Infinity;
+                let minY = Infinity;
+                let maxX = -Infinity;
+                let maxY = -Infinity;
+                
+                movingWaypoints.forEach(wp => {
+                    minX = Math.min(minX, wp.x);
+                    minY = Math.min(minY, wp.y);
+                    maxX = Math.max(maxX, wp.x);
+                    maxY = Math.max(maxY, wp.y);
+                });
+                
+                // Position and size
+                pathIndicator.style.left = `${minX}px`;
+                pathIndicator.style.top = `${minY}px`;
+                pathIndicator.style.width = `${maxX - minX}px`;
+                pathIndicator.style.height = `${maxY - minY}px`;
+            } else if (currentMovementType === 'circular') {
+                // For circular movement, calculate center and radius
                 const center = {
                     x: 0,
                     y: 0
                 };
                 
                 // Calculate center as average of all waypoints
-                waypoints.forEach(wp => {
+                movingWaypoints.forEach(wp => {
                     center.x += wp.x;
                     center.y += wp.y;
                 });
                 
-                center.x /= waypoints.length;
-                center.y /= waypoints.length;
+                center.x /= movingWaypoints.length;
+                center.y /= movingWaypoints.length;
                 
                 // Calculate radius as average distance to center
                 let radius = 0;
-                waypoints.forEach(wp => {
+                movingWaypoints.forEach(wp => {
                     const dx = wp.x - center.x;
                     const dy = wp.y - center.y;
                     radius += Math.sqrt(dx * dx + dy * dy);
                 });
                 
-                radius /= waypoints.length;
+                radius /= movingWaypoints.length;
                 
-                // Update angle
-                obstacle.angle = (obstacle.angle || 0) + speed;
-                
-                // Calculate new position
-                const newX = center.x + Math.cos(obstacle.angle) * radius;
-                const newY = center.y + Math.sin(obstacle.angle) * radius;
-                
-                // Update position
-                obstacle.x = newX;
-                obstacle.y = newY;
-                
-                // Update DOM
-                updateObstaclePosition(obstacle);
-            }
-        }
-    });
-}
-
-// Check collision with obstacle - updated to handle different types of obstacles
-function checkObstacleCollision(state, obstacle) {
-    if (state.isExploding || state.isKilled) return false;
-    
-    let hasCollided = false;
-    
-    if (obstacle.shape === 'rectangle') {
-        // Rectangular collision detection
-        if (
-            state.x < obstacle.x + obstacle.width &&
-            state.x + state.width > obstacle.x &&
-            state.y < obstacle.y + obstacle.height &&
-            state.y + state.height > obstacle.y
-        ) {
-            hasCollided = true;
-        }
-    } else if (obstacle.shape === 'circle') {
-        // Circle collision detection
-        const squareCenter = {
-            x: state.x + state.width / 2,
-            y: state.y + state.height / 2
-        };
-        
-        const obstacleCenter = {
-            x: obstacle.x + obstacle.width / 2,
-            y: obstacle.y + obstacle.height / 2
-        };
-        
-        const radius = obstacle.width / 2; // For circles, width = height
-        
-        // Calculate distance between centers
-        const dx = squareCenter.x - obstacleCenter.x;
-        const dy = squareCenter.y - obstacleCenter.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        // Check if the square's bounding rectangle intersects the circle
-        if (distance < radius + Math.max(state.width, state.height) / 2) {
-            hasCollided = true;
-        }
-    }
-    
-    if (hasCollided) {
-        // Get centers
-        const centerX = state.x + state.width / 2;
-        const centerY = state.y + state.height / 2;
-        const obstacleCenterX = obstacle.x + obstacle.width / 2;
-        const obstacleCenterY = obstacle.y + obstacle.height / 2;
-        
-        // Calculate collision point
-        const collisionX = (centerX + obstacleCenterX) / 2;
-        const collisionY = (centerY + obstacleCenterY) / 2;
-        
-        // Special handling for breakable obstacles
-        if (obstacle.type === 'breakable') {
-            breakObstacle(obstacle, collisionX, collisionY);
-            
-            // Create collision effect
-            createCollisionEffect(
-                collisionX, 
-                collisionY, 
-                state.shadow, 
-                obstacle.color
-            );
-            
-            // Don't bounce if the obstacle was destroyed (durability <= 0)
-            if (obstacle.durability <= 0) {
-                return true;
-            }
-        } else {
-            // Create collision effect for normal obstacles
-            createCollisionEffect(
-                collisionX, 
-                collisionY, 
-                state.shadow, 
-                obstacle.color
-            );
-        }
-        
-        // Determine which side was hit (for proper reflection)
-        const dx = centerX - obstacleCenterX;
-        const dy = centerY - obstacleCenterY;
-        
-        if (obstacle.shape === 'rectangle') {
-            // Calculate the obstacle's aspect ratio to determine reflection behavior
-            const aspectRatio = obstacle.width / obstacle.height;
-            
-            // Since the obstacle is typically wide and flat, 
-            // prioritize vertical reflection if collision occurs near the top/bottom edges
-            if (Math.abs(dy) * aspectRatio > Math.abs(dx)) {
-                // Vertical collision (top/bottom of obstacle)
-                state.direction.y *= -1;
-                
-                // Adjust position to prevent sticking
-                if (dy > 0) {
-                    state.y = obstacle.y + obstacle.height;
-                } else {
-                    state.y = obstacle.y - state.height;
-                }
-            } else {
-                // Horizontal collision (sides of obstacle)
-                state.direction.x *= -1;
-                
-                // Adjust position to prevent sticking
-                if (dx > 0) {
-                    state.x = obstacle.x + obstacle.width;
-                } else {
-                    state.x = obstacle.x - state.width;
-                }
-            }
-        } else if (obstacle.shape === 'circle') {
-            // For circular obstacles, reflect based on angle of collision
-            // Calculate normalized vector from circle center to square center
-            const length = Math.sqrt(dx * dx + dy * dy);
-            const nx = dx / length;
-            const ny = dy / length;
-            
-            // Reflect the direction vector based on normal
-            // For 45-degree-restricted movement, we need to reset to diagonal directions
-            if (Math.abs(nx) > Math.abs(ny)) {
-                // Horizontal component dominates, flip x
-                state.direction.x *= -1;
-            } else {
-                // Vertical component dominates, flip y
-                state.direction.y *= -1;
+                // Position and size
+                pathIndicator.style.left = `${center.x - radius}px`;
+                pathIndicator.style.top = `${center.y - radius}px`;
+                pathIndicator.style.width = `${radius * 2}px`;
+                pathIndicator.style.height = `${radius * 2}px`;
+                pathIndicator.style.borderRadius = '50%';
             }
             
-            // Push the square out of the circle to prevent sticking
-            state.x = obstacleCenterX + nx * (obstacle.width / 2 + state.width / 2);
-            state.y = obstacleCenterY + ny * (obstacle.width / 2 + state.height / 2);
+            // Add to frame
+            frame.appendChild(pathIndicator);
         }
-        
-        // Add pulse effect to square without rotation
-        state.element.style.transition = 'transform 0.2s ease';
-        state.element.style.transform = 'scale(1.2)';
-        setTimeout(() => {
-            state.element.style.transform = 'none';
-        }, 200);
-        
-        // Also add a quick flash to the obstacle
-        obstacle.element.style.transition = 'box-shadow 0.2s ease';
-        obstacle.element.style.boxShadow = `0 0 20px ${state.shadow}`;
-        setTimeout(() => {
-            if (obstacle.element.parentNode) { // Check if still exists
-                if (obstacle.type === 'breakable') {
-                    obstacle.element.style.boxShadow = '0 0 15px rgba(255, 140, 0, 0.6)';
-                } else if (obstacle.type === 'moving') {
-                    obstacle.element.style.boxShadow = '0 0 15px rgba(128, 0, 128, 0.6)';
-                } else {
-                    obstacle.element.style.boxShadow = 'none';
-                }
-            }
-        }, 200);
-        
-        return true;
-    }
-    
-    return false;
-}
 
-// Check collision with frame
-function checkFrameCollision(state) {
-    if (state.isExploding || state.isKilled) return false;
-    
-    const frameWidth = frame.clientWidth;
-    const frameHeight = frame.clientHeight;
-    let hasCollided = false;
-    
-    // Check horizontal boundaries with proper reflection
-    if (state.x <= 0) {
-        state.x = 0;
-        state.direction.x *= -1;
-        hasCollided = true;
-    } else if (state.x + state.width >= frameWidth) {
-        state.x = frameWidth - state.width;
-        state.direction.x *= -1;
-        hasCollided = true;
-    }
-    
-    // Check vertical boundaries with proper reflection
-    if (state.y <= 0) {
-        state.y = 0;
-        state.direction.y *= -1;
-        hasCollided = true;
-    } else if (state.y + state.height >= frameHeight) {
-        state.y = frameHeight - state.height;
-        state.direction.y *= -1;
-        hasCollided = true;
-    }
-    
-    // Create wall collision effect
-    if (hasCollided) {
-        createCollisionEffect(
-            state.x + state.width/2,
-            state.y + state.height/2,
-            state.shadow,
-            'rgba(0, 0, 0, 0.8)'
-        );
-        
-        // Add pulse effect to the square but without rotation
-        state.element.style.transition = 'transform 0.2s ease';
-        state.element.style.transform = 'scale(1.2)';
-        setTimeout(() => {
-            state.element.style.transform = 'none';
-        }, 200);
-    }
-    
-    return hasCollided;
-}
-
-// Check collision with block
-function checkBlockCollision(state, block) {
-    if (state.isExploding || state.isKilled) return false;
-    
-    // Check for collision with block
-    if (
-        state.x < block.x + block.width &&
-        state.x + state.width > block.x &&
-        state.y < block.y + block.height &&
-        state.y + state.height > block.y
-    ) {
-        // Handle based on block type
-        switch (block.type) {
-            case 'teleporter':
-                teleportSquare(state, block);
-                break;
-            case 'killer':
-                // Small delay before explosion
-                setTimeout(() => {
-                    createExplosion(state);
-                }, 200);
-                break;
-            case 'transformer':
-                transformSquare(state);
-                break;
-            case 'finishline':
-                // Show finish message after a small delay
-                showFinish();
-                break;
-        }
-        
-        return true;
-    }
-    
-    return false;
-}
-
-// Check if item is collided with
-function checkItemCollision(state, item) {
-    if (state.isExploding || state.isKilled) return false;
-    
-    // Check for collision with item
-    if (
-        state.x < item.x + item.size &&
-        state.x + state.width > item.x &&
-        state.y < item.y + item.size &&
-        state.y + state.height > item.y
-    ) {
-        // Handle based on item type
-        switch (item.type) {
-            case 'knife':
-                if (!state.hasKnife && state.knifePickupCooldown <= 0) {
-                    giveKnife(state, item);
-                }
-                break;
-        }
-        
-        return true;
-    }
-    
-    return false;
-}
-
-// Check collision between squares with proper reflection
-function checkSquareCollisions() {
-    for (let i = 0; i < squareStates.length; i++) {
-        for (let j = i + 1; j < squareStates.length; j++) {
-            const square1 = squareStates[i];
-            const square2 = squareStates[j];
+        // Create a new waypoint
+        function createWaypoint(x, y) {
+            // Create DOM element
+            const waypointElement = document.createElement('div');
+            waypointElement.classList.add('waypoint');
             
-            // Skip if either square is exploding or killed
-            if (square1.isExploding || square1.isKilled || 
-                square2.isExploding || square2.isKilled) continue;
+            // Position at cursor
+            waypointElement.style.left = `${x - 5}px`;
+            waypointElement.style.top = `${y - 5}px`;
             
-            // Check for collision
-            if (
-                square1.x < square2.x + square2.width &&
-                square1.x + square1.width > square2.x &&
-                square1.y < square2.y + square2.height &&
-                square1.y + square1.height > square2.y
-            ) {
-                // Calculate collision point for knife dropping
-                const center1X = square1.x + square1.width / 2;
-                const center1Y = square1.y + square1.height / 2;
-                const center2X = square2.x + square2.width / 2;
-                const center2Y = square2.y + square2.height / 2;
-                const collisionX = (center1X + center2X) / 2;
-                const collisionY = (center1Y + center2Y) / 2;
-                
-                // Check if any square has a knife
-                if (square1.hasKnife) {
-                    // Square 1 has knife, kill square 2
-                    createExplosion(square2);
-                    
-                    // Drop the knife at the collision point
-                    const knifeSize = parseInt(itemSizeInput.value) || KNIFE_SIZE;
-                    createItem(
-                        collisionX - (knifeSize / 2),
-                        collisionY - (knifeSize / 2),
-                        'knife',
-                        knifeSize
-                    );
-                    
-                    // Square 1 no longer has knife - restore original size and image
-                    square1.hasKnife = false;
-                    square1.element.classList.remove('has-knife');
-                    square1.knifePickupCooldown = KNIFE_PICKUP_COOLDOWN;
-                    
-                    // Reset size based on whether it's small or not
-                    if (square1.isSmall) {
-                        square1.width = SMALL_SQUARE_SIZE;
-                        square1.height = SMALL_SQUARE_SIZE;
-                    } else {
-                        square1.width = NORMAL_SQUARE_SIZE;
-                        square1.height = NORMAL_SQUARE_SIZE;
-                    }
-                    
-                    // Reset original image
-                    square1.element.style.backgroundImage = `url(${square1.image})`;
-                    
-                    // Update square size
-                    updateSquareSize(square1);
-                    
-                    return; // Skip regular collision handling
-                } else if (square2.hasKnife) {
-                    // Square 2 has knife, kill square 1
-                    createExplosion(square1);
-                    
-                    // Drop the knife at the collision point
-                    const knifeSize = parseInt(itemSizeInput.value) || KNIFE_SIZE;
-                    createItem(
-                        collisionX - (knifeSize / 2),
-                        collisionY - (knifeSize / 2),
-                        'knife',
-                        knifeSize
-                    );
-                    
-                    // Square 2 no longer has knife - restore original size and image
-                    square2.hasKnife = false;
-                    square2.element.classList.remove('has-knife');
-                    square2.knifePickupCooldown = KNIFE_PICKUP_COOLDOWN;
-                    
-                    // Reset size based on whether it's small or not
-                    if (square2.isSmall) {
-                        square2.width = SMALL_SQUARE_SIZE;
-                        square2.height = SMALL_SQUARE_SIZE;
-                    } else {
-                        square2.width = NORMAL_SQUARE_SIZE;
-                        square2.height = NORMAL_SQUARE_SIZE;
-                    }
-                    
-                    // Reset original image
-                    square2.element.style.backgroundImage = `url(${square2.image})`;
-                    
-                    // Update square size
-                    updateSquareSize(square2);
-                    
-                    return; // Skip regular collision handling
-                }
-                
-                // No knife, proceed with normal collision
-                
-                // Create collision effect
-                createCollisionEffect(collisionX, collisionY, square1.shadow, square2.shadow);
-                
-                // Calculate collision angle
-                const dx = center2X - center1X;
-                const dy = center2Y - center1Y;
-                
-                // Determine collision angle (which diagonal)
-                // Since we're restricted to 45° angles, we need to find which diagonal the collision happened on
-                
-                // Implement reflective collision based on which side was hit
-                // This maintains diagonal movement while reflecting properly
-                if (Math.abs(dx) > Math.abs(dy)) {
-                    // Horizontal collision predominant - reflect x directions
-                    square1.direction.x *= -1;
-                    square2.direction.x *= -1;
-                } else {
-                    // Vertical collision predominant - reflect y directions
-                    square1.direction.y *= -1;
-                    square2.direction.y *= -1;
-                }
-                
-                // Move squares slightly apart to prevent sticking
-                if (dx > 0) {
-                    square1.x -= 1;
-                    square2.x += 1;
-                } else {
-                    square1.x += 1;
-                    square2.x -= 1;
-                }
-                
-                if (dy > 0) {
-                    square1.y -= 1;
-                    square2.y += 1;
-                } else {
-                    square1.y += 1;
-                    square2.y -= 1;
-                }
-                
-                // Add pulse effect to both squares without rotation
-                [square1.element, square2.element].forEach(element => {
-                    element.style.transition = 'transform 0.2s ease';
-                    element.style.transform = 'scale(1.2)';
-                    setTimeout(() => {
-                        element.style.transform = 'none';
-                    }, 200);
+            // Add to frame
+            frame.appendChild(waypointElement);
+            
+            // Create waypoint state object
+            const newWaypoint = {
+                element: waypointElement,
+                x: x,
+                y: y
+            };
+            
+            // Add to waypoints array
+            movingWaypoints.push(newWaypoint);
+            
+            // Update obstacle waypoints if this is for a specific obstacle
+            if (currentMovingObstacle) {
+                currentMovingObstacle.waypoints.push({
+                    x: x,
+                    y: y
                 });
             }
-        }
-    }
-}
-
-// Animation loop
-function animate() {
-    frameCount++;
-    
-    // Don't animate if game is finished
-    if (isGameFinished) {
-        if (animationId) {
-            cancelAnimationFrame(animationId);
-            animationId = null;
-        }
-        return;
-    }
-    
-    // Update moving obstacles
-    updateMovingObstacles();
-    
-    // Check if any square is trapped between obstacles
-    if (frameCount % 5 === 0) { // Only check every 5 frames to save CPU
-        checkSquareTrapped();
-    }
-    
-    // Update positions
-    squareStates.forEach(state => {
-        // Skip if square is exploding, killed, or being dragged
-        if (state.isExploding || state.isKilled || (selectedSquare === state && isDragging)) {
-            return;
+            
+            // Setup interaction events
+            setupWaypoint(waypointElement, newWaypoint, movingWaypoints.length - 1);
+            
+            // Update path indicator
+            updatePathIndicator();
+            
+            return newWaypoint;
         }
         
-        // Decrease teleport cooldown
-        if (state.teleportCooldown > 0) {
-            state.teleportCooldown--;
-        }
-        
-        // Decrease knife pickup cooldown
-        if (state.knifePickupCooldown > 0) {
-            state.knifePickupCooldown -= 16; // Approximately 16ms per frame at 60fps
-        }
-        
-        // Move square
-        state.x += state.direction.x * state.speed;
-        state.y += state.direction.y * state.speed;
-        
-        // Check collisions in order
-        let hasCollided = false;
-        
-        // 1. Check block collisions first (special effects)
-        for (let i = 0; i < blocks.length; i++) {
-            if (checkBlockCollision(state, blocks[i])) {
-                hasCollided = true;
-                break;
+        // Setup obstacle interaction (drag, delete, select)
+        function setupObstacleInteraction(element, obstacle) {
+            // Delete button
+            const deleteBtn = element.querySelector('.obstacle-delete') || document.createElement('div');
+            
+            if (!element.querySelector('.obstacle-delete')) {
+                deleteBtn.classList.add('obstacle-delete');
+                deleteBtn.textContent = '×';
+                element.appendChild(deleteBtn);
             }
-        }
-        
-        // 2. Check item collisions
-        if (!hasCollided) {
-            for (let i = 0; i < items.length; i++) {
-                if (checkItemCollision(state, items[i])) {
-                    hasCollided = true;
-                    break;
+            
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                // Remove from DOM
+                element.remove();
+                // Remove from array
+                const index = obstacles.indexOf(obstacle);
+                if (index > -1) {
+                    obstacles.splice(index, 1);
                 }
-            }
-        }
-        
-        // 3. If no block or item collision, check obstacles and walls
-        if (!hasCollided) {
-            // Check obstacle collisions (bounce or break)
-            for (let i = 0; i < obstacles.length; i++) {
-                if (checkObstacleCollision(state, obstacles[i])) {
-                    hasCollided = true;
-                    break;
+                
+                // Clear selection if this was the selected obstacle
+                if (selectedObstacle === obstacle) {
+                    selectedObstacle = null;
+                    updateSelectionStatus();
                 }
+            });
+            
+            // Select obstacle
+            element.addEventListener('click', (e) => {
+                if (e.target === deleteBtn) return;
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+                
+                // Deselect any selected object
+                deselectAllObjects();
+                
+                // Select this obstacle
+                selectedObstacle = obstacle;
+                element.classList.add('selected');
+                deleteBtn.style.display = 'flex';
+                
+                updateSelectionStatus();
+            });
+            
+            // Drag functionality
+            element.addEventListener('mousedown', (e) => {
+                if (e.target === deleteBtn) return;
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+                
+                // Select this obstacle if not already selected
+                if (selectedObstacle !== obstacle) {
+                    // Deselect any selected object
+                    deselectAllObjects();
+                    
+                    // Select this obstacle
+                    selectedObstacle = obstacle;
+                    element.classList.add('selected');
+                    deleteBtn.style.display = 'flex';
+                    
+                    updateSelectionStatus();
+                }
+                
+                // Start dragging
+                isDragging = true;
+                dragOffsetX = e.clientX - obstacle.x;
+                dragOffsetY = e.clientY - obstacle.y;
+                
+                // Prevent default behavior
+                e.preventDefault();
+            });
+            
+            // Wheel event for resizing - only prevent default when directly over the element
+            element.addEventListener('wheel', (e) => {
+                // Only if this obstacle is selected
+                if (selectedObstacle === obstacle) {
+                    e.preventDefault(); // Prevent scrolling the page
+                    
+                    // Determine resize amount
+                    const resizeAmount = e.shiftKey ? SCROLL_RESIZE_AMOUNT_FINE : SCROLL_RESIZE_AMOUNT;
+                    const direction = e.deltaY < 0 ? 1 : -1; // Positive for scroll up, negative for scroll down
+                    
+                    // For rectangles, determine which dimension to resize based on Alt key
+                    if (obstacle.shape === 'rectangle') {
+                        if (e.altKey) {
+                            // Resize height
+                            obstacle.height = Math.max(10, obstacle.height + (direction * resizeAmount));
+                        } else {
+                            // Resize width
+                            obstacle.width = Math.max(10, obstacle.width + (direction * resizeAmount));
+                        }
+                    } else if (obstacle.shape === 'circle') {
+                        // For circles, resize both dimensions equally
+                        obstacle.width = Math.max(10, obstacle.width + (direction * resizeAmount));
+                        obstacle.height = obstacle.width; // Keep circle proportions
+                    }
+                    
+                    // Update DOM
+                    updateObstacleSize(obstacle);
+                    
+                    // Update input fields
+                    obstacleWidthInput.value = obstacle.width;
+                    obstacleHeightInput.value = obstacle.height;
+                }
+            });
+        }
+        // Setup block interaction (drag, delete, select)
+        function setupBlockInteraction(element, block) {
+            // Delete button
+            const deleteBtn = element.querySelector('.block-delete') || document.createElement('div');
+            
+            if (!element.querySelector('.block-delete')) {
+                deleteBtn.classList.add('block-delete');
+                deleteBtn.textContent = '×';
+                element.appendChild(deleteBtn);
             }
             
-            // Check frame collision (bounce)
-            if (!hasCollided) {
-                checkFrameCollision(state);
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                // Remove from DOM
+                element.remove();
+                // Remove from array
+                const index = blocks.indexOf(block);
+                if (index > -1) {
+                    blocks.splice(index, 1);
+                }
+                
+                // Clear selection if this was the selected block
+                if (selectedBlock === block) {
+                    selectedBlock = null;
+                    updateSelectionStatus();
+                }
+            });
+            
+            // Select block
+            element.addEventListener('click', (e) => {
+                if (e.target === deleteBtn) return;
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+                
+                // Deselect any selected object
+                deselectAllObjects();
+                
+                // Select this block
+                selectedBlock = block;
+                element.classList.add('selected');
+                deleteBtn.style.display = 'flex';
+                
+                updateSelectionStatus();
+            });
+            
+            // Drag functionality
+            element.addEventListener('mousedown', (e) => {
+                if (e.target === deleteBtn) return;
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+                
+                // Select this block if not already selected
+                if (selectedBlock !== block) {
+                    // Deselect any selected object
+                    deselectAllObjects();
+                    
+                    // Select this block
+                    selectedBlock = block;
+                    element.classList.add('selected');
+                    deleteBtn.style.display = 'flex';
+                    
+                    updateSelectionStatus();
+                }
+                
+                // Start dragging
+                isDragging = true;
+                dragOffsetX = e.clientX - block.x;
+                dragOffsetY = e.clientY - block.y;
+                
+                // Prevent default behavior
+                e.preventDefault();
+            });
+            
+            // Wheel event for resizing
+            element.addEventListener('wheel', (e) => {
+                // Only if this block is selected
+                if (selectedBlock === block) {
+                    e.preventDefault(); // Prevent scrolling the page
+                    
+                    // Determine resize amount
+                    const resizeAmount = e.shiftKey ? SCROLL_RESIZE_AMOUNT_FINE : SCROLL_RESIZE_AMOUNT;
+                    const direction = e.deltaY < 0 ? 1 : -1; // Positive for scroll up, negative for scroll down
+                    
+                    if (e.altKey) {
+                        // Resize height
+                        block.height = Math.max(10, block.height + (direction * resizeAmount));
+                    } else {
+                        // Resize width
+                        block.width = Math.max(10, block.width + (direction * resizeAmount));
+                    }
+                    
+                    // Update DOM
+                    updateBlockSize(block);
+                    
+                    // Update input fields
+                    blockWidthInput.value = block.width;
+                    blockHeightInput.value = block.height;
+                }
+            });
+        }
+        
+        // Setup item interaction (drag, delete, select)
+        function setupItemInteraction(element, item) {
+            // Delete button
+            const deleteBtn = element.querySelector('.item-delete') || document.createElement('div');
+            
+            if (!element.querySelector('.item-delete')) {
+                deleteBtn.classList.add('item-delete');
+                deleteBtn.textContent = '×';
+                element.appendChild(deleteBtn);
+            }
+            
+            deleteBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                // Remove from DOM
+                element.remove();
+                // Remove from array
+                const index = items.indexOf(item);
+                if (index > -1) {
+                    items.splice(index, 1);
+                }
+                
+                // Clear selection if this was the selected item
+                if (selectedItem === item) {
+                    selectedItem = null;
+                    updateSelectionStatus();
+                }
+            });
+            
+            // Select item
+            element.addEventListener('click', (e) => {
+                if (e.target === deleteBtn) return;
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+                
+                // Deselect any selected object
+                deselectAllObjects();
+                
+                // Select this item
+                selectedItem = item;
+                element.classList.add('selected');
+                deleteBtn.style.display = 'flex';
+                
+                updateSelectionStatus();
+            });
+            
+            // Drag functionality
+            element.addEventListener('mousedown', (e) => {
+                if (e.target === deleteBtn) return;
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+                
+                // Select this item if not already selected
+                if (selectedItem !== item) {
+                    // Deselect any selected object
+                    deselectAllObjects();
+                    
+                    // Select this item
+                    selectedItem = item;
+                    element.classList.add('selected');
+                    deleteBtn.style.display = 'flex';
+                    
+                    updateSelectionStatus();
+                }
+                
+                // Start dragging
+                isDragging = true;
+                dragOffsetX = e.clientX - item.x;
+                dragOffsetY = e.clientY - item.y;
+                
+                // Prevent default behavior
+                e.preventDefault();
+            });
+            
+            // Wheel event for resizing
+            element.addEventListener('wheel', (e) => {
+                // Only if this item is selected
+                if (selectedItem === item) {
+                    e.preventDefault(); // Prevent scrolling the page
+                    
+                    // Determine resize amount
+                    const resizeAmount = e.shiftKey ? SCROLL_RESIZE_AMOUNT_FINE : SCROLL_RESIZE_AMOUNT;
+                    const direction = e.deltaY < 0 ? 1 : -1; // Positive for scroll up, negative for scroll down
+                    
+                    // Resize uniformly
+                    item.size = Math.max(10, item.size + (direction * resizeAmount));
+                    
+                    // Update DOM
+                    updateItemSize(item);
+                    
+                    // Update input field
+                    itemSizeInput.value = item.size;
+                }
+            });
+        }
+        
+        // Setup square interaction (select, drag)
+        function setupSquareInteraction(element, square, index) {
+            // Select square
+            element.addEventListener('click', (e) => {
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+                if (square.isExploding || square.isKilled) return;
+                
+                // Deselect any selected object
+                deselectAllObjects();
+                
+                // Select this square
+                selectedSquare = square;
+                selectedSquareIndex = index;
+                element.classList.add('selected');
+                
+                // Show the spawn point for this square
+                spawnPoints.forEach((spawn, i) => {
+                    spawn.style.display = i === index ? 'block' : 'none';
+                });
+                
+                updateSelectionStatus();
+                
+                // Prevent default behavior
+                e.preventDefault();
+            });
+            
+            // Drag functionality
+            element.addEventListener('mousedown', (e) => {
+                if (isAddingObstacle || isAddingBlock || isAddingItem) return;
+                if (square.isExploding || square.isKilled) return;
+                
+                // Stop animation if it's running
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+                
+                // Select this square if not already selected
+                if (selectedSquare !== square) {
+                    // Deselect any selected object
+                    deselectAllObjects();
+                    
+                    // Select this square
+                    selectedSquare = square;
+                    selectedSquareIndex = index;
+                    element.classList.add('selected');
+                    
+                    // Show the spawn point for this square
+                    spawnPoints.forEach((spawn, i) => {
+                        spawn.style.display = i === index ? 'block' : 'none';
+                    });
+                    
+                    updateSelectionStatus();
+                }
+                
+                // Start dragging
+                isDragging = true;
+                dragOffsetX = e.clientX - square.x;
+                dragOffsetY = e.clientY - square.y;
+                
+                // Prevent default behavior
+                e.preventDefault();
+            });
+            
+            // Wheel event for resizing square
+            element.addEventListener('wheel', (e) => {
+                // Only if this square is selected
+                if (selectedSquare === square) {
+                    e.preventDefault(); // Prevent scrolling the page
+                    
+                    // Toggle square size
+                    square.isSmall = !square.isSmall;
+                    
+                    if (square.isSmall) {
+                        square.width = SMALL_SQUARE_SIZE;
+                        square.height = SMALL_SQUARE_SIZE;
+                        square.element.classList.add('small');
+                    } else {
+                        square.width = NORMAL_SQUARE_SIZE;
+                        square.height = NORMAL_SQUARE_SIZE;
+                        square.element.classList.remove('small');
+                    }
+                    
+                    // Update DOM
+                    updateSquareSize(square);
+                    
+                    // Update spawn point size
+                    spawnPoints[index].style.width = square.width + 'px';
+                    spawnPoints[index].style.height = square.height + 'px';
+                }
+            });
+        }
+        
+        // Deselect all objects
+        function deselectAllObjects() {
+            // Deselect obstacle if any selected
+            if (selectedObstacle) {
+                selectedObstacle.element.classList.remove('selected');
+                const deleteBtn = selectedObstacle.element.querySelector('.obstacle-delete');
+                if (deleteBtn) deleteBtn.style.display = 'none';
+                selectedObstacle = null;
+            }
+            
+            // Deselect block if any selected
+            if (selectedBlock) {
+                selectedBlock.element.classList.remove('selected');
+                const deleteBtn = selectedBlock.element.querySelector('.block-delete');
+                if (deleteBtn) deleteBtn.style.display = 'none';
+                selectedBlock = null;
+            }
+
+            // Deselect item if any selected
+            if (selectedItem) {
+                selectedItem.element.classList.remove('selected');
+                const deleteBtn = selectedItem.element.querySelector('.item-delete');
+                if (deleteBtn) deleteBtn.style.display = 'none';
+                selectedItem = null;
+            }
+            
+            // Deselect square if any selected
+            if (selectedSquare) {
+                selectedSquare.element.classList.remove('selected');
+                selectedSquare = null;
+                selectedSquareIndex = null;
+                
+                // Hide all spawn points
+                spawnPoints.forEach(spawn => {
+                    spawn.style.display = 'none';
+                });
+            }
+
+            // Deselect waypoint if any selected
+            if (selectedWaypoint) {
+                selectedWaypoint.element.classList.remove('selected');
+                const deleteBtn = selectedWaypoint.element.querySelector('.waypoint-delete');
+                if (deleteBtn) deleteBtn.style.display = 'none';
+                selectedWaypoint = null;
             }
         }
         
-        // Create trails
-        createTrail(state);
-        
-        // Update DOM
-        updateSquarePosition(state);
-    });
-    
-    // Check collisions between squares
-    checkSquareCollisions();
-    
-    // Continue animation
-    animationId = requestAnimationFrame(animate);
-}
-
-// Create a new obstacle
-function createObstacle(x, y) {
-    // Get options for the new obstacle
-    const width = parseInt(obstacleWidthInput.value) || 70;
-    const height = parseInt(obstacleHeightInput.value) || 10;
-    const color = obstacleColorInput.value || '#000000';
-    const opacity = parseFloat(obstacleOpacityInput.value) || 0.8;
-    const shape = obstacleShapeInput.value || 'rectangle';
-    
-    // Create DOM element
-    const obstacleElement = document.createElement('div');
-    obstacleElement.classList.add('obstacle');
-    obstacleElement.style.width = `${width}px`;
-    obstacleElement.style.height = `${height}px`;
-    
-    // Set color with opacity
-    const rgbaColor = `rgba(${parseInt(color.slice(1, 3), 16)}, ${parseInt(color.slice(3, 5), 16)}, ${parseInt(color.slice(5, 7), 16)}, ${opacity})`;
-    obstacleElement.style.backgroundColor = rgbaColor;
-    
-    // Position at cursor
-    obstacleElement.style.left = `${x - width/2}px`;
-    obstacleElement.style.top = `${y - height/2}px`;
-    
-    // Apply border radius for circle shape
-    if (shape === 'circle') {
-        obstacleElement.style.borderRadius = '50%';
-    } else {
-        obstacleElement.style.borderRadius = '2px';
-    }
-    
-    // Add delete button
-    const deleteBtn = document.createElement('div');
-    deleteBtn.classList.add('obstacle-delete');
-    deleteBtn.textContent = '×';
-    obstacleElement.appendChild(deleteBtn);
-    
-    // Add to frame
-    frame.appendChild(obstacleElement);
-    
-    // Create obstacle state object
-    const newObstacle = {
-        element: obstacleElement,
-        x: x - width/2,
-        y: y - height/2,
-        width: width,
-        height: height,
-        shape: shape,
-        color: rgbaColor,
-        type: 'normal',
-        durability: 3 // Default durability even for normal obstacles
-    };
-    
-    // Add to obstacles array
-    obstacles.push(newObstacle);
-    
-    // Setup interaction events
-    setupObstacleInteraction(obstacleElement, newObstacle);
-    
-    return newObstacle;
-}
-
-// Create a breakable obstacle
-function createBreakableObstacle(x, y) {
-    // Get options for the new obstacle
-    const width = parseInt(obstacleWidthInput.value) || 70;
-    const height = parseInt(obstacleHeightInput.value) || 10;
-    const shape = obstacleShapeInput.value || 'rectangle';
-    const durability = parseInt(obstacleDurabilityInput.value) || 3;
-    
-    // Create DOM element
-    const obstacleElement = document.createElement('div');
-    obstacleElement.classList.add('obstacle', 'breakable');
-    obstacleElement.style.width = `${width}px`;
-    obstacleElement.style.height = `${height}px`;
-    
-    // Position at cursor
-    obstacleElement.style.left = `${x - width/2}px`;
-    obstacleElement.style.top = `${y - height/2}px`;
-    
-    // Apply border radius for circle shape
-    if (shape === 'circle') {
-        obstacleElement.style.borderRadius = '50%';
-    } else {
-        obstacleElement.style.borderRadius = '2px';
-    }
-    
-    // Add durability indicator
-    obstacleElement.setAttribute('data-durability', durability);
-    
-    // Add delete button
-    const deleteBtn = document.createElement('div');
-    deleteBtn.classList.add('obstacle-delete');
-    deleteBtn.textContent = '×';
-    obstacleElement.appendChild(deleteBtn);
-    
-    // Add to frame
-    frame.appendChild(obstacleElement);
-    
-    // Create obstacle state object
-    const newObstacle = {
-        element: obstacleElement,
-        x: x - width/2,
-        y: y - height/2,
-        width: width,
-        height: height,
-        shape: shape,
-        color: 'rgba(150, 75, 0, 0.8)',
-        type: 'breakable',
-        durability: durability
-    };
-    
-    // Add to obstacles array
-    obstacles.push(newObstacle);
-    
-    // Setup interaction events
-    setupObstacleInteraction(obstacleElement, newObstacle);
-    
-    return newObstacle;
-}
-
-// Create a moving obstacle
-function createMovingObstacle(x, y) {
-    // Get options for the new obstacle
-    const width = parseInt(obstacleWidthInput.value) || 70;
-    const height = parseInt(obstacleHeightInput.value) || 10;
-    const shape = obstacleShapeInput.value || 'rectangle';
-    
-    // Create DOM element
-    const obstacleElement = document.createElement('div');
-    obstacleElement.classList.add('obstacle', 'moving');
-    obstacleElement.style.width = `${width}px`;
-    obstacleElement.style.height = `${height}px`;
-    
-    // Position at cursor
-    obstacleElement.style.left = `${x - width/2}px`;
-    obstacleElement.style.top = `${y - height/2}px`;
-    
-    // Apply border radius for circle shape
-    if (shape === 'circle') {
-        obstacleElement.style.borderRadius = '50%';
-    } else {
-        obstacleElement.style.borderRadius = '2px';
-    }
-    
-    // Add delete button
-    const deleteBtn = document.createElement('div');
-    deleteBtn.classList.add('obstacle-delete');
-    deleteBtn.textContent = '×';
-    obstacleElement.appendChild(deleteBtn);
-    
-    // Add to frame
-    frame.appendChild(obstacleElement);
-    
-    // Create obstacle state object
-    const newObstacle = {
-        element: obstacleElement,
-        x: x - width/2,
-        y: y - height/2,
-        width: width,
-        height: height,
-        shape: shape,
-        color: 'rgba(75, 0, 130, 0.8)',
-        type: 'moving',
-        moving: true,
-        waypoints: [],
-        currentWaypoint: 0,
-        movementType: currentMovementType,
-        speed: parseInt(movingSpeedInput.value) || 3,
-        progress: 0
-    };
-    
-    // Add to obstacles array
-    obstacles.push(newObstacle);
-    
-    // Setup interaction events
-    setupObstacleInteraction(obstacleElement, newObstacle);
-    
-    return newObstacle;
-}
-
-// Create a block with special properties
-function createBlock(x, y, type) {
-    // Get options for the new block
-    const width = parseInt(blockWidthInput.value) || 50;
-    const height = parseInt(blockHeightInput.value) || 50;
-    
-    // Create DOM element
-    const blockElement = document.createElement('div');
-    blockElement.classList.add('block');
-    blockElement.classList.add(type);
-    blockElement.style.width = `${width}px`;
-    blockElement.style.height = `${height}px`;
-    
-    // Position at cursor
-    blockElement.style.left = `${x - width/2}px`;
-    blockElement.style.top = `${y - height/2}px`;
-    
-    // Add delete button
-    const deleteBtn = document.createElement('div');
-    deleteBtn.classList.add('block-delete');
-    deleteBtn.textContent = '×';
-    blockElement.appendChild(deleteBtn);
-    
-    // Add to frame
-    frame.appendChild(blockElement);
-    
-    // Create block state object
-    const newBlock = {
-        element: blockElement,
-        x: x - width/2,
-        y: y - height/2,
-        width: width,
-        height: height,
-        type: type
-    };
-    
-    // Add to blocks array
-    blocks.push(newBlock);
-    
-    // Setup interaction events
-    setupBlockInteraction(blockElement, newBlock);
-    
-    return newBlock;
-}
-
-// Create an item (knife, etc.)
-function createItem(x, y, type, size = KNIFE_SIZE) {
-    // Create DOM element
-    const itemElement = document.createElement('div');
-    itemElement.classList.add('item');
-    itemElement.classList.add(type);
-    itemElement.style.width = `${size}px`;
-    itemElement.style.height = `${size}px`;
-    
-    // Position at cursor
-    itemElement.style.left = `${x}px`;
-    itemElement.style.top = `${y}px`;
-    
-    // Add delete button
-    const deleteBtn = document.createElement('div');
-    deleteBtn.classList.add('item-delete');
-    deleteBtn.textContent = '×';
-    itemElement.appendChild(deleteBtn);
-    
-    // Add to frame
-    frame.appendChild(itemElement);
-    
-    // Create item state object
-    const newItem = {
-        element: itemElement,
-        x: x,
-        y: y,
-        size: size,
-        type: type
-    };
-    
-    // Add to items array
-    items.push(newItem);
-    
-    // Setup interaction events
-    setupItemInteraction(itemElement, newItem);
-    
-    return newItem;
-}
-
-// Setup a waypoint for moving obstacles
-function setupWaypoint(element, waypoint, index) {
-    // Delete button
-    // Delete button
-    const deleteBtn = document.createElement('div');
-    deleteBtn.classList.add('waypoint-delete');
-    deleteBtn.textContent = '×';
-    element.appendChild(deleteBtn);
-    
-    // Click to select
-    element.addEventListener('click', (e) => {
-        if (e.target === deleteBtn) return;
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-
-        // Deselect any selected object
-        deselectAllObjects();
-
-        // Select this waypoint
-        selectedWaypoint = waypoint;
-        element.classList.add('selected');
-        deleteBtn.style.display = 'flex';
-
-        updateSelectionStatus();
-    });
-    
-    // Delete button click
-    deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        
-        // Remove from DOM
-        element.remove();
-        
-        // Remove from array
-        const wpIndex = movingWaypoints.indexOf(waypoint);
-        if (wpIndex > -1) {
-            movingWaypoints.splice(wpIndex, 1);
-        }
-        
-        // Update obstacle waypoints if this is for a specific obstacle
-        if (currentMovingObstacle) {
-            currentMovingObstacle.waypoints = movingWaypoints.slice();
-        }
-        
-        // Clear selection if this was the selected waypoint
-        if (selectedWaypoint === waypoint) {
-            selectedWaypoint = null;
-            updateSelectionStatus();
-        }
-        
-        // Update path indicator
-        updatePathIndicator();
-    });
-    
-    // Drag functionality
-    element.addEventListener('mousedown', (e) => {
-        if (e.target === deleteBtn) return;
-        
-        // Select this waypoint if not already selected
-        if (selectedWaypoint !== waypoint) {
-            // Deselect any selected object
-            deselectAllObjects();
-            // Select this waypoint
-            selectedWaypoint = waypoint;
-            element.classList.add('selected');
-            deleteBtn.style.display = 'flex';
+        // Mouse move event for dragging
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
             
-            updateSelectionStatus();
-        }
-        
-        // Start dragging
-        isDragging = true;
-        dragOffsetX = e.clientX - waypoint.x;
-        dragOffsetY = e.clientY - waypoint.y;
-        
-        // Prevent default behavior
-        e.preventDefault();
-    });
-}
-
-// Update path indicator for moving obstacles
-function updatePathIndicator() {
-    // Remove existing path indicator
-    if (pathIndicator) {
-        pathIndicator.remove();
-        pathIndicator = null;
-    }
-    
-    // If fewer than 2 waypoints, no path to show
-    if (movingWaypoints.length < 2) return;
-    
-    // Create new path indicator
-    pathIndicator = document.createElement('div');
-    pathIndicator.classList.add('moving-path-indicator');
-    
-    if (currentMovementType === 'linear') {
-        // For linear movement, draw a polygon connecting all waypoints
-        const points = movingWaypoints.map(wp => `${wp.x},${wp.y}`).join(' ');
-        pathIndicator.style.clipPath = `polygon(${points})`;
-        
-        // Calculate bounding box
-        let minX = Infinity;
-        let minY = Infinity;
-        let maxX = -Infinity;
-        let maxY = -Infinity;
-        
-        movingWaypoints.forEach(wp => {
-            minX = Math.min(minX, wp.x);
-            minY = Math.min(minY, wp.y);
-            maxX = Math.max(maxX, wp.x);
-            maxY = Math.max(maxY, wp.y);
+            const frameRect = frame.getBoundingClientRect();
+            
+            if (selectedObstacle) {
+                // Calculate new position within frame boundaries
+                let newX = e.clientX - dragOffsetX - frameRect.left;
+                let newY = e.clientY - dragOffsetY - frameRect.top;
+                
+                // Apply boundaries
+                newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedObstacle.width));
+                newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedObstacle.height));
+                
+                // Update position
+                selectedObstacle.x = newX;
+                selectedObstacle.y = newY;
+                
+                // Update DOM
+                updateObstaclePosition(selectedObstacle);
+            } else if (selectedBlock) {
+                // Calculate new position within frame boundaries
+                let newX = e.clientX - dragOffsetX - frameRect.left;
+                let newY = e.clientY - dragOffsetY - frameRect.top;
+                
+                // Apply boundaries
+                newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedBlock.width));
+                newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedBlock.height));
+                
+                // Update position
+                selectedBlock.x = newX;
+                selectedBlock.y = newY;
+                
+                // Update DOM
+                updateBlockPosition(selectedBlock);
+            } else if (selectedItem) {
+                // Calculate new position within frame boundaries
+                let newX = e.clientX - dragOffsetX - frameRect.left;
+                let newY = e.clientY - dragOffsetY - frameRect.top;
+                
+                // Apply boundaries
+                newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedItem.size));
+                newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedItem.size));
+                
+                // Update position
+                selectedItem.x = newX;
+                selectedItem.y = newY;
+                
+                // Update DOM
+                updateItemPosition(selectedItem);
+            } else if (selectedSquare) {
+                // Calculate new position within frame boundaries
+                let newX = e.clientX - dragOffsetX - frameRect.left;
+                let newY = e.clientY - dragOffsetY - frameRect.top;
+                
+                // Apply boundaries
+                newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedSquare.width));
+                newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedSquare.height));
+                
+                // Update position
+                selectedSquare.x = newX;
+                selectedSquare.y = newY;
+                
+                // Update DOM
+                updateSquarePosition(selectedSquare);
+            } else if (selectedWaypoint) {
+                // Calculate new position within frame boundaries
+                let newX = e.clientX - dragOffsetX - frameRect.left;
+                let newY = e.clientY - dragOffsetY - frameRect.top;
+                
+                // Apply boundaries
+                newX = Math.max(0, Math.min(newX, frame.clientWidth));
+                newY = Math.max(0, Math.min(newY, frame.clientHeight));
+                
+                // Update position
+                selectedWaypoint.x = newX;
+                selectedWaypoint.y = newY;
+                
+                // Update DOM element
+                selectedWaypoint.element.style.left = newX - 5 + 'px'; // -5 to center 10px element
+                selectedWaypoint.element.style.top = newY - 5 + 'px';
+                
+                // Update obstacle waypoints if this is for a specific obstacle
+                if (currentMovingObstacle) {
+                    const wpIndex = currentMovingObstacle.waypoints.findIndex(wp => 
+                        wp === selectedWaypoint || (wp.x === selectedWaypoint.x && wp.y === selectedWaypoint.y)
+                    );
+                    
+                    if (wpIndex > -1) {
+                        currentMovingObstacle.waypoints[wpIndex].x = newX;
+                        currentMovingObstacle.waypoints[wpIndex].y = newY;
+                    }
+                }
+                
+                // Update path indicator
+                updatePathIndicator();
+            }
         });
         
-        // Position and size
-        pathIndicator.style.left = `${minX}px`;
-        pathIndicator.style.top = `${minY}px`;
-        pathIndicator.style.width = `${maxX - minX}px`;
-        pathIndicator.style.height = `${maxY - minY}px`;
-    } else if (currentMovementType === 'circular') {
-        // For circular movement, calculate center and radius
-        const center = {
-            x: 0,
-            y: 0
-        };
-        
-        // Calculate center as average of all waypoints
-        movingWaypoints.forEach(wp => {
-            center.x += wp.x;
-            center.y += wp.y;
+        // Mouse up event to stop dragging
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
         });
         
-        center.x /= movingWaypoints.length;
-        center.y /= movingWaypoints.length;
-        
-        // Calculate radius as average distance to center
-        let radius = 0;
-        movingWaypoints.forEach(wp => {
-            const dx = wp.x - center.x;
-            const dy = wp.y - center.y;
-            radius += Math.sqrt(dx * dx + dy * dy);
-        });
-        
-        radius /= movingWaypoints.length;
-        
-        // Position and size
-        pathIndicator.style.left = `${center.x - radius}px`;
-        pathIndicator.style.top = `${center.y - radius}px`;
-        pathIndicator.style.width = `${radius * 2}px`;
-        pathIndicator.style.height = `${radius * 2}px`;
-        pathIndicator.style.borderRadius = '50%';
-    }
-    
-    // Add to frame
-    frame.appendChild(pathIndicator);
-}
-
-// Create a new waypoint
-function createWaypoint(x, y) {
-    // Create DOM element
-    const waypointElement = document.createElement('div');
-    waypointElement.classList.add('waypoint');
-    
-    // Position at cursor
-    waypointElement.style.left = `${x - 5}px`;
-    waypointElement.style.top = `${y - 5}px`;
-    
-    // Add to frame
-    frame.appendChild(waypointElement);
-    
-    // Create waypoint state object
-    const newWaypoint = {
-        element: waypointElement,
-        x: x,
-        y: y
-    };
-    
-    // Add to waypoints array
-    movingWaypoints.push(newWaypoint);
-    
-    // Update obstacle waypoints if this is for a specific obstacle
-    if (currentMovingObstacle) {
-        currentMovingObstacle.waypoints.push({
-            x: x,
-            y: y
-        });
-    }
-    
-    // Setup interaction events
-    setupWaypoint(waypointElement, newWaypoint, movingWaypoints.length - 1);
-    
-    // Update path indicator
-    updatePathIndicator();
-    
-    return newWaypoint;
-}
-
-// Setup obstacle interaction (drag, delete, select)
-function setupObstacleInteraction(element, obstacle) {
-    // Delete button
-    const deleteBtn = element.querySelector('.obstacle-delete') || document.createElement('div');
-    
-    if (!element.querySelector('.obstacle-delete')) {
-        deleteBtn.classList.add('obstacle-delete');
-        deleteBtn.textContent = '×';
-        element.appendChild(deleteBtn);
-    }
-    
-    deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Remove from DOM
-        element.remove();
-        // Remove from array
-        const index = obstacles.indexOf(obstacle);
-        if (index > -1) {
-            obstacles.splice(index, 1);
+        // Start pressure checker
+        function startPressureChecker() {
+            if (pressureCheckTimer) return;
+            
+            pressureCheckTimer = setInterval(() => {
+                checkSquareTrapped();
+            }, PRESSURE_CHECK_INTERVAL);
         }
         
-        // Clear selection if this was the selected obstacle
-        if (selectedObstacle === obstacle) {
-            selectedObstacle = null;
-            updateSelectionStatus();
-        }
-    });
-    
-    // Select obstacle
-    element.addEventListener('click', (e) => {
-        if (e.target === deleteBtn) return;
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-        
-        // Deselect any selected object
-        deselectAllObjects();
-        
-        // Select this obstacle
-        selectedObstacle = obstacle;
-        element.classList.add('selected');
-        deleteBtn.style.display = 'flex';
-        
-        updateSelectionStatus();
-    });
-    
-    // Drag functionality
-    element.addEventListener('mousedown', (e) => {
-        if (e.target === deleteBtn) return;
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-        
-        // Select this obstacle if not already selected
-        if (selectedObstacle !== obstacle) {
-            // Deselect any selected object
-            deselectAllObjects();
-            
-            // Select this obstacle
-            selectedObstacle = obstacle;
-            element.classList.add('selected');
-            deleteBtn.style.display = 'flex';
-            
-            updateSelectionStatus();
+        // Stop pressure checker
+        function stopPressureChecker() {
+            if (pressureCheckTimer) {
+                clearInterval(pressureCheckTimer);
+                pressureCheckTimer = null;
+            }
         }
         
-        // Start dragging
-        isDragging = true;
-        dragOffsetX = e.clientX - obstacle.x;
-        dragOffsetY = e.clientY - obstacle.y;
-        
-        // Prevent default behavior
-        e.preventDefault();
-    });
-    
-    // Wheel event for resizing - only prevent default when directly over the element
-    element.addEventListener('wheel', (e) => {
-        // Only if this obstacle is selected
-        if (selectedObstacle === obstacle) {
-            e.preventDefault(); // Prevent scrolling the page
+        // Keyboard event handling
+        document.addEventListener('keydown', (e) => {
+            // Square selection with number keys
+            if (!isNaN(parseInt(e.key)) && parseInt(e.key) >= 1 && parseInt(e.key) <= 4) {
+                const index = parseInt(e.key) - 1;
+                const square = squareStates[index];
+                
+                // Skip if square is killed
+                if (square.isKilled) return;
+                
+                // Deselect any selected object
+                deselectAllObjects();
+                
+                // Select the square
+                selectedSquare = square;
+                selectedSquareIndex = index;
+                selectedSquare.element.classList.add('selected');
+                
+                // Show the spawn point for this square
+                spawnPoints.forEach((spawn, i) => {
+                    spawn.style.display = i === index ? 'block' : 'none';
+                });
+                
+                updateSelectionStatus();
+            }
             
-            // Determine resize amount
-            const resizeAmount = e.shiftKey ? SCROLL_RESIZE_AMOUNT_FINE : SCROLL_RESIZE_AMOUNT;
-            const direction = e.deltaY < 0 ? 1 : -1; // Positive for scroll up, negative for scroll down
-            
-            // For rectangles, determine which dimension to resize based on Alt key
-            if (obstacle.shape === 'rectangle') {
-                if (e.altKey) {
-                    // Resize height
-                    obstacle.height = Math.max(10, obstacle.height + (direction * resizeAmount));
+            // Tab key to cycle through obstacles, blocks, and items
+            if (e.key === 'Tab') {
+                e.preventDefault(); // Prevent focus change
+                
+                // Combine all selectable objects
+                const selectableObjects = [
+                    ...obstacles.map(obj => ({ type: 'obstacle', object: obj })),
+                    ...blocks.map(obj => ({ type: 'block', object: obj })),
+                    ...items.map(obj => ({ type: 'item', object: obj })),
+                    ...squareStates.filter(sq => !sq.isKilled).map((obj, idx) => ({ type: 'square', object: obj, index: idx })),
+                    ...movingWaypoints.map(obj => ({ type: 'waypoint', object: obj }))
+                ];
+                
+                if (selectableObjects.length === 0) return;
+                
+                // Deselect current selection
+                deselectAllObjects();
+                
+                // Determine next object to select
+                let currentIndex = -1;
+                
+                if (selectedObstacle) {
+                    currentIndex = selectableObjects.findIndex(item => 
+                        item.type === 'obstacle' && item.object === selectedObstacle
+                    );
+                } else if (selectedBlock) {
+                    currentIndex = selectableObjects.findIndex(item => 
+                        item.type === 'block' && item.object === selectedBlock
+                    );
+                } else if (selectedItem) {
+                    currentIndex = selectableObjects.findIndex(item => 
+                        item.type === 'item' && item.object === selectedItem
+                    );
+                } else if (selectedSquare) {
+                    currentIndex = selectableObjects.findIndex(item => 
+                        item.type === 'square' && item.object === selectedSquare
+                    );
+                } else if (selectedWaypoint) {
+                    currentIndex = selectableObjects.findIndex(item => 
+                        item.type === 'waypoint' && item.object === selectedWaypoint
+                    );
+                }
+                
+                // Calculate next index
+                let nextIndex;
+                if (e.shiftKey) {
+                    // Go backwards with Shift+Tab
+                    nextIndex = currentIndex <= 0 ? selectableObjects.length - 1 : currentIndex - 1;
                 } else {
-                    // Resize width
-                    obstacle.width = Math.max(10, obstacle.width + (direction * resizeAmount));
+                    // Go forwards with Tab
+                    nextIndex = (currentIndex + 1) % selectableObjects.length;
                 }
-            } else if (obstacle.shape === 'circle') {
-                // For circles, resize both dimensions equally
-                obstacle.width = Math.max(10, obstacle.width + (direction * resizeAmount));
-                obstacle.height = obstacle.width; // Keep circle proportions
-            }
-            
-            // Update DOM
-            updateObstacleSize(obstacle);
-            
-            // Update input fields
-            obstacleWidthInput.value = obstacle.width;
-            obstacleHeightInput.value = obstacle.height;
-        }
-    });
-}
-
-// Setup block interaction (drag, delete, select)
-function setupBlockInteraction(element, block) {
-    // Delete button
-    const deleteBtn = element.querySelector('.block-delete') || document.createElement('div');
-    
-    if (!element.querySelector('.block-delete')) {
-        deleteBtn.classList.add('block-delete');
-        deleteBtn.textContent = '×';
-        element.appendChild(deleteBtn);
-    }
-    
-    deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Remove from DOM
-        element.remove();
-        // Remove from array
-        const index = blocks.indexOf(block);
-        if (index > -1) {
-            blocks.splice(index, 1);
-        }
-        
-        // Clear selection if this was the selected block
-        if (selectedBlock === block) {
-            selectedBlock = null;
-            updateSelectionStatus();
-        }
-    });
-    
-    // Select block
-    element.addEventListener('click', (e) => {
-        if (e.target === deleteBtn) return;
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-        
-        // Deselect any selected object
-        deselectAllObjects();
-        
-        // Select this block
-        selectedBlock = block;
-        element.classList.add('selected');
-        deleteBtn.style.display = 'flex';
-        
-        updateSelectionStatus();
-    });
-    
-    // Drag functionality
-    element.addEventListener('mousedown', (e) => {
-        if (e.target === deleteBtn) return;
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-        
-        // Select this block if not already selected
-        if (selectedBlock !== block) {
-            // Deselect any selected object
-            deselectAllObjects();
-            
-            // Select this block
-            selectedBlock = block;
-            element.classList.add('selected');
-            deleteBtn.style.display = 'flex';
-            
-            updateSelectionStatus();
-        }
-        
-        // Start dragging
-        isDragging = true;
-        dragOffsetX = e.clientX - block.x;
-        dragOffsetY = e.clientY - block.y;
-        
-        // Prevent default behavior
-        e.preventDefault();
-    });
-    
-    // Wheel event for resizing
-    element.addEventListener('wheel', (e) => {
-        // Only if this block is selected
-        if (selectedBlock === block) {
-            e.preventDefault(); // Prevent scrolling the page
-            
-            // Determine resize amount
-            const resizeAmount = e.shiftKey ? SCROLL_RESIZE_AMOUNT_FINE : SCROLL_RESIZE_AMOUNT;
-            const direction = e.deltaY < 0 ? 1 : -1; // Positive for scroll up, negative for scroll down
-            
-            if (e.altKey) {
-                // Resize height
-                block.height = Math.max(10, block.height + (direction * resizeAmount));
-            } else {
-                // Resize width
-                block.width = Math.max(10, block.width + (direction * resizeAmount));
-            }
-            
-            // Update DOM
-            updateBlockSize(block);
-            
-            // Update input fields
-            blockWidthInput.value = block.width;
-            blockHeightInput.value = block.height;
-        }
-    });
-}
-
-// Setup item interaction (drag, delete, select)
-function setupItemInteraction(element, item) {
-    // Delete button
-    const deleteBtn = element.querySelector('.item-delete') || document.createElement('div');
-    
-    if (!element.querySelector('.item-delete')) {
-        deleteBtn.classList.add('item-delete');
-        deleteBtn.textContent = '×';
-        element.appendChild(deleteBtn);
-    }
-    
-    deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        // Remove from DOM
-        element.remove();
-        // Remove from array
-        const index = items.indexOf(item);
-        if (index > -1) {
-            items.splice(index, 1);
-        }
-        
-        // Clear selection if this was the selected item
-        if (selectedItem === item) {
-            selectedItem = null;
-            updateSelectionStatus();
-        }
-    });
-    
-    // Select item
-    element.addEventListener('click', (e) => {
-        if (e.target === deleteBtn) return;
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-        
-        // Deselect any selected object
-        deselectAllObjects();
-        
-        // Select this item
-        selectedItem = item;
-        element.classList.add('selected');
-        deleteBtn.style.display = 'flex';
-        
-        updateSelectionStatus();
-    });
-    
-    // Drag functionality
-    element.addEventListener('mousedown', (e) => {
-        if (e.target === deleteBtn) return;
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-        
-        // Select this item if not already selected
-        if (selectedItem !== item) {
-            // Deselect any selected object
-            deselectAllObjects();
-            
-            // Select this item
-            selectedItem = item;
-            element.classList.add('selected');
-            deleteBtn.style.display = 'flex';
-            
-            updateSelectionStatus();
-        }
-        
-        // Start dragging
-        isDragging = true;
-        dragOffsetX = e.clientX - item.x;
-        dragOffsetY = e.clientY - item.y;
-        
-        // Prevent default behavior
-        e.preventDefault();
-    });
-    
-    // Wheel event for resizing
-    element.addEventListener('wheel', (e) => {
-        // Only if this item is selected
-        if (selectedItem === item) {
-            e.preventDefault(); // Prevent scrolling the page
-            
-            // Determine resize amount
-            const resizeAmount = e.shiftKey ? SCROLL_RESIZE_AMOUNT_FINE : SCROLL_RESIZE_AMOUNT;
-            const direction = e.deltaY < 0 ? 1 : -1; // Positive for scroll up, negative for scroll down
-            
-            // Resize uniformly
-            item.size = Math.max(10, item.size + (direction * resizeAmount));
-            
-            // Update DOM
-            updateItemSize(item);
-            
-            // Update input field
-            itemSizeInput.value = item.size;
-        }
-    });
-}
-
-// Setup square interaction (select, drag)
-function setupSquareInteraction(element, square, index) {
-    // Select square
-    element.addEventListener('click', (e) => {
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-        if (square.isExploding || square.isKilled) return;
-        
-        // Deselect any selected object
-        deselectAllObjects();
-        
-        // Select this square
-        selectedSquare = square;
-        selectedSquareIndex = index;
-        element.classList.add('selected');
-        
-        // Show the spawn point for this square
-        spawnPoints.forEach((spawn, i) => {
-            spawn.style.display = i === index ? 'block' : 'none';
-        });
-        
-        updateSelectionStatus();
-        
-        // Prevent default behavior
-        e.preventDefault();
-    });
-    
-    // Drag functionality
-    element.addEventListener('mousedown', (e) => {
-        if (isAddingObstacle || isAddingBlock || isAddingItem) return;
-        if (square.isExploding || square.isKilled) return;
-        
-        // Stop animation if it's running
-        if (animationId) {
-            cancelAnimationFrame(animationId);
-            animationId = null;
-        }
-        
-        // Select this square if not already selected
-        if (selectedSquare !== square) {
-            // Deselect any selected object
-            deselectAllObjects();
-            
-            // Select this square
-            selectedSquare = square;
-            selectedSquareIndex = index;
-            element.classList.add('selected');
-            
-            // Show the spawn point for this square
-            spawnPoints.forEach((spawn, i) => {
-                spawn.style.display = i === index ? 'block' : 'none';
-            });
-            
-            updateSelectionStatus();
-        }
-        
-        // Start dragging
-        isDragging = true;
-        dragOffsetX = e.clientX - square.x;
-        dragOffsetY = e.clientY - square.y;
-        
-        // Prevent default behavior
-        e.preventDefault();
-    });
-    
-    // Wheel event for resizing square
-    element.addEventListener('wheel', (e) => {
-        // Only if this square is selected
-        if (selectedSquare === square) {
-            e.preventDefault(); // Prevent scrolling the page
-            
-            // Toggle square size
-            square.isSmall = !square.isSmall;
-            
-            if (square.isSmall) {
-                square.width = SMALL_SQUARE_SIZE;
-                square.height = SMALL_SQUARE_SIZE;
-                square.element.classList.add('small');
-            } else {
-                square.width = NORMAL_SQUARE_SIZE;
-                square.height = NORMAL_SQUARE_SIZE;
-                square.element.classList.remove('small');
-            }
-            
-            // Update DOM
-            updateSquareSize(square);
-            
-            // Update spawn point size
-            spawnPoints[index].style.width = square.width + 'px';
-            spawnPoints[index].style.height = square.height + 'px';
-        }
-    });
-}
-
-// Deselect all objects
-function deselectAllObjects() {
-    // Deselect obstacle if any selected
-    if (selectedObstacle) {
-        selectedObstacle.element.classList.remove('selected');
-        const deleteBtn = selectedObstacle.element.querySelector('.obstacle-delete');
-        if (deleteBtn) deleteBtn.style.display = 'none';
-        selectedObstacle = null;
-    }
-    
-    // Deselect block if any selected
-    if (selectedBlock) {
-        selectedBlock.element.classList.remove('selected');
-        const deleteBtn = selectedBlock.element.querySelector('.block-delete');
-        if (deleteBtn) deleteBtn.style.display = 'none';
-        selectedBlock = null;
-    }
-
-    // Deselect item if any selected
-    if (selectedItem) {
-        selectedItem.element.classList.remove('selected');
-        const deleteBtn = selectedItem.element.querySelector('.item-delete');
-        if (deleteBtn) deleteBtn.style.display = 'none';
-        selectedItem = null;
-    }
-    
-    // Deselect square if any selected
-    if (selectedSquare) {
-        selectedSquare.element.classList.remove('selected');
-        selectedSquare = null;
-        selectedSquareIndex = null;
-        
-        // Hide all spawn points
-        spawnPoints.forEach(spawn => {
-            spawn.style.display = 'none';
-        });
-    }
-
-    // Deselect waypoint if any selected
-    if (selectedWaypoint) {
-        selectedWaypoint.element.classList.remove('selected');
-        const deleteBtn = selectedWaypoint.element.querySelector('.waypoint-delete');
-        if (deleteBtn) deleteBtn.style.display = 'none';
-        selectedWaypoint = null;
-    }
-}
-
-// Mouse move event for dragging
-document.addEventListener('mousemove', (e) => {
-    if (!isDragging) return;
-    
-    const frameRect = frame.getBoundingClientRect();
-    
-    if (selectedObstacle) {
-        // Calculate new position within frame boundaries
-        let newX = e.clientX - dragOffsetX - frameRect.left;
-        let newY = e.clientY - dragOffsetY - frameRect.top;
-        
-        // Apply boundaries
-        newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedObstacle.width));
-        newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedObstacle.height));
-        
-        // Update position
-        selectedObstacle.x = newX;
-        selectedObstacle.y = newY;
-        
-        // Update DOM
-        updateObstaclePosition(selectedObstacle);
-    } else if (selectedBlock) {
-        // Calculate new position within frame boundaries
-        let newX = e.clientX - dragOffsetX - frameRect.left;
-        let newY = e.clientY - dragOffsetY - frameRect.top;
-        
-        // Apply boundaries
-        newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedBlock.width));
-        newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedBlock.height));
-        
-        // Update position
-        selectedBlock.x = newX;
-        selectedBlock.y = newY;
-        
-        // Update DOM
-        updateBlockPosition(selectedBlock);
-    } else if (selectedItem) {
-        // Calculate new position within frame boundaries
-        let newX = e.clientX - dragOffsetX - frameRect.left;
-        let newY = e.clientY - dragOffsetY - frameRect.top;
-        
-        // Apply boundaries
-        newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedItem.size));
-        newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedItem.size));
-        
-        // Update position
-        selectedItem.x = newX;
-        selectedItem.y = newY;
-        
-        // Update DOM
-        updateItemPosition(selectedItem);
-    } else if (selectedSquare) {
-        // Calculate new position within frame boundaries
-        let newX = e.clientX - dragOffsetX - frameRect.left;
-        let newY = e.clientY - dragOffsetY - frameRect.top;
-        
-        // Apply boundaries
-        newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedSquare.width));
-        newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedSquare.height));
-        
-        // Update position
-        selectedSquare.x = newX;
-        selectedSquare.y = newY;
-        
-        // Update DOM
-        updateSquarePosition(selectedSquare);
-    } else if (selectedWaypoint) {
-        // Calculate new position within frame boundaries
-        let newX = e.clientX - dragOffsetX - frameRect.left;
-        let newY = e.clientY - dragOffsetY - frameRect.top;
-        
-        // Apply boundaries
-        newX = Math.max(0, Math.min(newX, frame.clientWidth));
-        newY = Math.max(0, Math.min(newY, frame.clientHeight));
-        
-        // Update position
-        selectedWaypoint.x = newX;
-        selectedWaypoint.y = newY;
-        
-        // Update DOM element
-        selectedWaypoint.element.style.left = newX - 5 + 'px'; // -5 to center 10px element
-        selectedWaypoint.element.style.top = newY - 5 + 'px';
-        
-        // Update obstacle waypoints if this is for a specific obstacle
-        if (currentMovingObstacle) {
-            const wpIndex = currentMovingObstacle.waypoints.findIndex(wp => 
-                wp === selectedWaypoint || (wp.x === selectedWaypoint.x && wp.y === selectedWaypoint.y)
-            );
-            
-            if (wpIndex > -1) {
-                currentMovingObstacle.waypoints[wpIndex].x = newX;
-                currentMovingObstacle.waypoints[wpIndex].y = newY;
-            }
-        }
-        
-        // Update path indicator
-        updatePathIndicator();
-    }
-});
-
-// Mouse up event to stop dragging
-document.addEventListener('mouseup', () => {
-    isDragging = false;
-});
-
-// Start pressure checker
-function startPressureChecker() {
-    if (pressureCheckTimer) return;
-    
-    pressureCheckTimer = setInterval(() => {
-        checkSquareTrapped();
-    }, PRESSURE_CHECK_INTERVAL);
-}
-
-// Stop pressure checker
-function stopPressureChecker() {
-    if (pressureCheckTimer) {
-        clearInterval(pressureCheckTimer);
-        pressureCheckTimer = null;
-    }
-}
-
-// Keyboard event handling
-document.addEventListener('keydown', (e) => {
-    // Square selection with number keys
-    if (!isNaN(parseInt(e.key)) && parseInt(e.key) >= 1 && parseInt(e.key) <= 4) {
-        const index = parseInt(e.key) - 1;
-        const square = squareStates[index];
-        
-        // Skip if square is killed
-        if (square.isKilled) return;
-        
-        // Deselect any selected object
-        deselectAllObjects();
-        
-        // Select the square
-        selectedSquare = square;
-        selectedSquareIndex = index;
-        selectedSquare.element.classList.add('selected');
-        
-        // Show the spawn point for this square
-        spawnPoints.forEach((spawn, i) => {
-            spawn.style.display = i === index ? 'block' : 'none';
-        });
-        
-        updateSelectionStatus();
-    }
-    
-    // Tab key to cycle through obstacles, blocks, and items
-    if (e.key === 'Tab') {
-        e.preventDefault(); // Prevent focus change
-        
-        // Combine all selectable objects
-        const selectableObjects = [
-            ...obstacles.map(obj => ({ type: 'obstacle', object: obj })),
-            ...blocks.map(obj => ({ type: 'block', object: obj })),
-            ...items.map(obj => ({ type: 'item', object: obj })),
-            ...squareStates.filter(sq => !sq.isKilled).map((obj, idx) => ({ type: 'square', object: obj, index: idx })),
-            ...movingWaypoints.map(obj => ({ type: 'waypoint', object: obj }))
-        ];
-        
-        if (selectableObjects.length === 0) return;
-        
-        // Deselect current selection
-        deselectAllObjects();
-        
-        // Determine next object to select
-        let currentIndex = -1;
-        
-        if (selectedObstacle) {
-            currentIndex = selectableObjects.findIndex(item => 
-                item.type === 'obstacle' && item.object === selectedObstacle
-            );
-        } else if (selectedBlock) {
-            currentIndex = selectableObjects.findIndex(item => 
-                item.type === 'block' && item.object === selectedBlock
-            );
-        } else if (selectedItem) {
-            currentIndex = selectableObjects.findIndex(item => 
-                item.type === 'item' && item.object === selectedItem
-            );
-        } else if (selectedSquare) {
-            currentIndex = selectableObjects.findIndex(item => 
-                item.type === 'square' && item.object === selectedSquare
-            );
-        } else if (selectedWaypoint) {
-            currentIndex = selectableObjects.findIndex(item => 
-                item.type === 'waypoint' && item.object === selectedWaypoint
-            );
-        }
-        
-        // Calculate next index
-        let nextIndex;
-        if (e.shiftKey) {
-            // Go backwards with Shift+Tab
-            nextIndex = currentIndex <= 0 ? selectableObjects.length - 1 : currentIndex - 1;
-        } else {
-            // Go forwards with Tab
-            nextIndex = (currentIndex + 1) % selectableObjects.length;
-        }
-        
-        // Select next object
-        const nextObj = selectableObjects[nextIndex];
-        
-        if (nextObj.type === 'obstacle') {
-            selectedObstacle = nextObj.object;
-            selectedObstacle.element.classList.add('selected');
-            selectedObstacle.element.querySelector('.obstacle-delete').style.display = 'flex';
-        } else if (nextObj.type === 'block') {
-            selectedBlock = nextObj.object;
-            selectedBlock.element.classList.add('selected');
-            selectedBlock.element.querySelector('.block-delete').style.display = 'flex';
-        } else if (nextObj.type === 'item') {
-            selectedItem = nextObj.object;
-            selectedItem.element.classList.add('selected');
-            selectedItem.element.querySelector('.item-delete').style.display = 'flex';
-        } else if (nextObj.type === 'square') {
-            selectedSquare = nextObj.object;
-            selectedSquareIndex = nextObj.index;
-            selectedSquare.element.classList.add('selected');
-            
-            // Show the spawn point for this square
-            spawnPoints.forEach((spawn, i) => {
-                spawn.style.display = i === nextObj.index ? 'block' : 'none';
-            });
-        } else if (nextObj.type === 'waypoint') {
-            selectedWaypoint = nextObj.object;
-            selectedWaypoint.element.classList.add('selected');
-            const deleteBtn = selectedWaypoint.element.querySelector('.waypoint-delete');
-            if (deleteBtn) deleteBtn.style.display = 'flex';
-        }
-        
-        updateSelectionStatus();
-    }
-    
-    // Arrow keys for moving selected object
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-        // Stop animation if it's running and a square is selected
-        if (animationId && selectedSquare) {
-            cancelAnimationFrame(animationId);
-            animationId = null;
-        }
-        
-        // Calculate movement amount
-        let dx = 0;
-        let dy = 0;
-        
-        switch (e.key) {
-            case 'ArrowLeft':
-                dx = -0.1;
-                break;
-            case 'ArrowRight':
-                dx = 0.1;
-                break;
-            case 'ArrowUp':
-                dy = -0.1;
-                break;
-            case 'ArrowDown':
-                dy = 0.1;
-                break;
-        }
-        
-        // Apply movement speed
-        const speed = e.shiftKey ? MOVE_SPEED * 3 : MOVE_SPEED;
-        dx *= speed;
-        dy *= speed;
-        
-        // Apply movement to selected object
-        if (selectedObstacle) {
-            // Calculate new position within frame boundaries
-            let newX = selectedObstacle.x + dx;
-            let newY = selectedObstacle.y + dy;
-            
-            // Apply boundaries
-            newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedObstacle.width));
-            newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedObstacle.height));
-            
-            // Update position
-            selectedObstacle.x = newX;
-            selectedObstacle.y = newY;
-            
-            // Update DOM
-            updateObstaclePosition(selectedObstacle);
-        } else if (selectedBlock) {
-            // Calculate new position within frame boundaries
-            let newX = selectedBlock.x + dx;
-            let newY = selectedBlock.y + dy;
-            
-            // Apply boundaries
-            newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedBlock.width));
-            newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedBlock.height));
-            
-            // Update position
-            selectedBlock.x = newX;
-            selectedBlock.y = newY;
-            
-            // Update DOM
-            updateBlockPosition(selectedBlock);
-        } else if (selectedItem) {
-            // Calculate new position within frame boundaries
-            let newX = selectedItem.x + dx;
-            let newY = selectedItem.y + dy;
-            
-            // Apply boundaries
-            newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedItem.size));
-            newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedItem.size));
-            
-            // Update position
-            selectedItem.x = newX;
-            selectedItem.y = newY;
-            
-            // Update DOM
-            updateItemPosition(selectedItem);
-        } else if (selectedSquare) {
-            // Calculate new position within frame boundaries
-            let newX = selectedSquare.x + dx;
-            let newY = selectedSquare.y + dy;
-            
-            // Apply boundaries
-            newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedSquare.width));
-            newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedSquare.height));
-            
-            // Update position
-            selectedSquare.x = newX;
-            selectedSquare.y = newY;
-            
-            // Update DOM
-            updateSquarePosition(selectedSquare);
-        } else if (selectedWaypoint) {
-            // Calculate new position within frame boundaries
-            let newX = selectedWaypoint.x + dx;
-            let newY = selectedWaypoint.y + dy;
-            
-            // Apply boundaries
-            newX = Math.max(0, Math.min(newX, frame.clientWidth));
-            newY = Math.max(0, Math.min(newY, frame.clientHeight));
-            
-            // Update position
-            selectedWaypoint.x = newX;
-            selectedWaypoint.y = newY;
-            
-            // Update DOM
-            selectedWaypoint.element.style.left = newX - 5 + 'px';
-            selectedWaypoint.element.style.top = newY - 5 + 'px';
-            
-            // Update obstacle waypoints if this is for a specific obstacle
-            if (currentMovingObstacle) {
-                const wpIndex = currentMovingObstacle.waypoints.findIndex(wp => 
-                    wp.x === selectedWaypoint.x && wp.y === selectedWaypoint.y
-                );
                 
-                if (wpIndex > -1) {
-                    currentMovingObstacle.waypoints[wpIndex].x = newX;
-                    currentMovingObstacle.waypoints[wpIndex].y = newY;
-                }
-            }
-            
-            // Update path indicator
-            updatePathIndicator();
-        }
-    }
-    
-    // Delete key to remove selected object
-    if (e.key === 'Delete' || e.key === 'Backspace') {
-        if (selectedObstacle) {
-            // Remove from DOM
-            selectedObstacle.element.remove();
-            
-            // Remove from array
-            const index = obstacles.indexOf(selectedObstacle);
-            if (index > -1) {
-                obstacles.splice(index, 1);
-            }
-            
-            // Clear selection
-            selectedObstacle = null;
-            updateSelectionStatus();
-        } else if (selectedBlock) {
-            // Remove from DOM
-            selectedBlock.element.remove();
-            
-            // Remove from array
-            const index = blocks.indexOf(selectedBlock);
-            if (index > -1) {
-                blocks.splice(index, 1);
-            }
-            
-            // Clear selection
-            selectedBlock = null;
-            updateSelectionStatus();
-        } else if (selectedItem) {
-            // Remove from DOM
-            selectedItem.element.remove();
-            
-            // Remove from array
-            const index = items.indexOf(selectedItem);
-            if (index > -1) {
-                items.splice(index, 1);
-            }
-            
-            // Clear selection
-            selectedItem = null;
-            updateSelectionStatus();
-        } else if (selectedWaypoint) {
-            // Remove from DOM
-            selectedWaypoint.element.remove();
-            
-            // Remove from array
-            const wpIndex = movingWaypoints.indexOf(selectedWaypoint);
-            if (wpIndex > -1) {
-                movingWaypoints.splice(wpIndex, 1);
-            }
-            
-            // Update obstacle waypoints if this is for a specific obstacle
-            if (currentMovingObstacle) {
-                const obstacleWpIndex = currentMovingObstacle.waypoints.findIndex(wp => 
-                    wp.x === selectedWaypoint.x && wp.y === selectedWaypoint.y
-                );
+                // Select next object
+                const nextObj = selectableObjects[nextIndex];
                 
-                if (obstacleWpIndex > -1) {
-                    currentMovingObstacle.waypoints.splice(obstacleWpIndex, 1);
+                if (nextObj.type === 'obstacle') {
+                    selectedObstacle = nextObj.object;
+                    selectedObstacle.element.classList.add('selected');
+                    selectedObstacle.element.querySelector('.obstacle-delete').style.display = 'flex';
+                } else if (nextObj.type === 'block') {
+                    selectedBlock = nextObj.object;
+                    selectedBlock.element.classList.add('selected');
+                    selectedBlock.element.querySelector('.block-delete').style.display = 'flex';
+                } else if (nextObj.type === 'item') {
+                    selectedItem = nextObj.object;
+                    selectedItem.element.classList.add('selected');
+                    selectedItem.element.querySelector('.item-delete').style.display = 'flex';
+                } else if (nextObj.type === 'square') {
+                    selectedSquare = nextObj.object;
+                    selectedSquareIndex = nextObj.index;
+                    selectedSquare.element.classList.add('selected');
+                    
+                    // Show the spawn point for this square
+                    spawnPoints.forEach((spawn, i) => {
+                        spawn.style.display = i === nextObj.index ? 'block' : 'none';
+                    });
+                } else if (nextObj.type === 'waypoint') {
+                    selectedWaypoint = nextObj.object;
+                    selectedWaypoint.element.classList.add('selected');
+                    const deleteBtn = selectedWaypoint.element.querySelector('.waypoint-delete');
+                    if (deleteBtn) deleteBtn.style.display = 'flex';
+                }
+                
+                updateSelectionStatus();
+            }
+            
+            // Arrow keys for moving selected object
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                // Stop animation if it's running and a square is selected
+                if (animationId && selectedSquare) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+                
+                // Calculate movement amount
+                let dx = 0;
+                let dy = 0;
+                
+                switch (e.key) {
+                    case 'ArrowLeft':
+                        dx = -0.1;
+                        break;
+                    case 'ArrowRight':
+                        dx = 0.1;
+                        break;
+                    case 'ArrowUp':
+                        dy = -0.1;
+                        break;
+                    case 'ArrowDown':
+                        dy = 0.1;
+                        break;
+                }
+                
+                // Apply movement speed
+                const speed = e.shiftKey ? MOVE_SPEED * 3 : MOVE_SPEED;
+                dx *= speed;
+                dy *= speed;
+                
+                // Apply movement to selected object
+                if (selectedObstacle) {
+                    // Calculate new position within frame boundaries
+                    let newX = selectedObstacle.x + dx;
+                    let newY = selectedObstacle.y + dy;
+                    
+                    // Apply boundaries
+                    newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedObstacle.width));
+                    newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedObstacle.height));
+                    
+                    // Update position
+                    selectedObstacle.x = newX;
+                    selectedObstacle.y = newY;
+                    
+                    // Update DOM
+                    updateObstaclePosition(selectedObstacle);
+                } else if (selectedBlock) {
+                    // Calculate new position within frame boundaries
+                    let newX = selectedBlock.x + dx;
+                    let newY = selectedBlock.y + dy;
+                    
+                    // Apply boundaries
+                    newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedBlock.width));
+                    newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedBlock.height));
+                    
+                    // Update position
+                    selectedBlock.x = newX;
+                    selectedBlock.y = newY;
+                    
+                    // Update DOM
+                    updateBlockPosition(selectedBlock);
+                } else if (selectedItem) {
+                    // Calculate new position within frame boundaries
+                    let newX = selectedItem.x + dx;
+                    let newY = selectedItem.y + dy;
+                    
+                    // Apply boundaries
+                    newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedItem.size));
+                    newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedItem.size));
+                    
+                    // Update position
+                    selectedItem.x = newX;
+                    selectedItem.y = newY;
+                    
+                    // Update DOM
+                    updateItemPosition(selectedItem);
+                } else if (selectedSquare) {
+                    // Calculate new position within frame boundaries
+                    let newX = selectedSquare.x + dx;
+                    let newY = selectedSquare.y + dy;
+                    
+                    // Apply boundaries
+                    newX = Math.max(0, Math.min(newX, frame.clientWidth - selectedSquare.width));
+                    newY = Math.max(0, Math.min(newY, frame.clientHeight - selectedSquare.height));
+                    
+                    // Update position
+                    selectedSquare.x = newX;
+                    selectedSquare.y = newY;
+                    
+                    // Update DOM
+                    updateSquarePosition(selectedSquare);
+                } else if (selectedWaypoint) {
+                    // Calculate new position within frame boundaries
+                    let newX = selectedWaypoint.x + dx;
+                    let newY = selectedWaypoint.y + dy;
+                    
+                    // Apply boundaries
+                    newX = Math.max(0, Math.min(newX, frame.clientWidth));
+                    newY = Math.max(0, Math.min(newY, frame.clientHeight));
+                    
+                    // Update position
+                    selectedWaypoint.x = newX;
+                    selectedWaypoint.y = newY;
+                    
+                    // Update DOM
+                    selectedWaypoint.element.style.left = newX - 5 + 'px';
+                    selectedWaypoint.element.style.top = newY - 5 + 'px';
+                    
+                    // Update obstacle waypoints if this is for a specific obstacle
+                    if (currentMovingObstacle) {
+                        const wpIndex = currentMovingObstacle.waypoints.findIndex(wp => 
+                            wp.x === selectedWaypoint.x && wp.y === selectedWaypoint.y
+                        );
+                        
+                        if (wpIndex > -1) {
+                            currentMovingObstacle.waypoints[wpIndex].x = newX;
+                            currentMovingObstacle.waypoints[wpIndex].y = newY;
+                        }
+                    }
+                    
+                    // Update path indicator
+                    updatePathIndicator();
                 }
             }
             
-            // Clear selection
-            selectedWaypoint = null;
-            updateSelectionStatus();
+            // Delete key to remove selected object
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                if (selectedObstacle) {
+                    // Remove from DOM
+                    selectedObstacle.element.remove();
+                    
+                    // Remove from array
+                    const index = obstacles.indexOf(selectedObstacle);
+                    if (index > -1) {
+                        obstacles.splice(index, 1);
+                    }
+                    
+                    // Clear selection
+                    selectedObstacle = null;
+                    updateSelectionStatus();
+                } else if (selectedBlock) {
+                    // Remove from DOM
+                    selectedBlock.element.remove();
+                    
+                    // Remove from array
+                    const index = blocks.indexOf(selectedBlock);
+                    if (index > -1) {
+                        blocks.splice(index, 1);
+                    }
+                    
+                    // Clear selection
+                    selectedBlock = null;
+                    updateSelectionStatus();
+                } else if (selectedItem) {
+                    // Remove from DOM
+                    selectedItem.element.remove();
+                    
+                    // Remove from array
+                    const index = items.indexOf(selectedItem);
+                    if (index > -1) {
+                        items.splice(index, 1);
+                    }
+                    
+                    // Clear selection
+                    selectedItem = null;
+                    updateSelectionStatus();
+                } else if (selectedWaypoint) {
+                    // Remove from DOM
+                    selectedWaypoint.element.remove();
+                    
+                    // Remove from array
+                    const wpIndex = movingWaypoints.indexOf(selectedWaypoint);
+                    if (wpIndex > -1) {
+                        movingWaypoints.splice(wpIndex, 1);
+                    }
+                    
+                    // Update obstacle waypoints if this is for a specific obstacle
+                    if (currentMovingObstacle) {
+                        const obstacleWpIndex = currentMovingObstacle.waypoints.findIndex(wp => 
+                            wp.x === selectedWaypoint.x && wp.y === selectedWaypoint.y
+                        );
+                        
+                        if (obstacleWpIndex > -1) {
+                            currentMovingObstacle.waypoints.splice(obstacleWpIndex, 1);
+                        }
+                    }
+                    
+                    // Clear selection
+                    selectedWaypoint = null;
+                    updateSelectionStatus();
+                    
+                    // Update path indicator
+                    updatePathIndicator();
+                }
+            }
             
-            // Update path indicator
-            updatePathIndicator();
-        }
-    }
-    
-    // R key to restart if game finished or exit fullscreen mode
-    if (e.key === 'r' || e.key === 'R') {
-        if (isFullscreen) {
-            // Exit fullscreen mode
-            toggleFullscreen();
-        } else if (isGameFinished) {
-            // Hide finish message
-            finishMessage.style.display = 'none';
-            isGameFinished = false;
+            // R key to restart if game finished or exit fullscreen mode
+            if (e.key === 'r' || e.key === 'R') {
+                if (isFullscreen) {
+                    // Exit fullscreen mode
+                    toggleFullscreen();
+                } else if (isGameFinished) {
+                    // Hide finish message
+                    finishMessage.style.display = 'none';
+                    isGameFinished = false;
+                    
+                    // Reset and restart
+                    initializeSquares();
+                    animate();
+                }
+            }
             
-            // Reset and restart
-            initializeSquares();
-            animate();
-        }
-    }
-    
-    // F key to toggle fullscreen mode
-    if (e.key === 'f' || e.key === 'F') {
-        toggleFullscreen();
-    }
-    
-    // S key to start simulation or send square to spawn point
-    if (e.key === 's' || e.key === 'S') {
-        if (selectedSquare) {
-            // Stop animation if it's running
+            // F key to toggle fullscreen mode
+            if (e.key === 'f' || e.key === 'F') {
+                toggleFullscreen();
+            }
+            
+            // S key to start simulation or send square to spawn point
+            if (e.key === 's' || e.key === 'S') {
+                if (selectedSquare) {
+                    // Stop animation if it's running
+                    if (animationId) {
+                        cancelAnimationFrame(animationId);
+                        animationId = null;
+                        stopPressureChecker();
+                    }
+                    
+                    // Move to spawn point
+                    selectedSquare.x = selectedSquare.spawnX;
+                    selectedSquare.y = selectedSquare.spawnY;
+                    
+                    // Update DOM
+                    updateSquarePosition(selectedSquare);
+                } else if (!animationId && !isGameFinished) {
+                    // Start simulation if no square is selected
+                    animate();
+                    startPressureChecker();
+                }
+            }
+            
+            // Add speed control for selected moving obstacle (+ and - keys)
+            if ((e.key === '+' || e.key === '=') && selectedObstacle && selectedObstacle.moving) {
+                // Increase speed
+                selectedObstacle.speed = Math.min(10, selectedObstacle.speed + 1);
+                // Update the UI slider if available
+                if (selectedObstacle === currentMovingObstacle) {
+                    movingSpeedInput.value = selectedObstacle.speed;
+                }
+            }
+
+            if ((e.key === '-' || e.key === '_') && selectedObstacle && selectedObstacle.moving) {
+                // Decrease speed
+                selectedObstacle.speed = Math.max(1, selectedObstacle.speed - 1);
+                // Update the UI slider if available
+                if (selectedObstacle === currentMovingObstacle) {
+                    movingSpeedInput.value = selectedObstacle.speed;
+                }
+            }
+            
+            // Control waypoints for selected moving obstacle
+            if (selectedObstacle && selectedObstacle.moving && selectedObstacle.waypoints && selectedObstacle.waypoints.length > 0) {
+                // If no waypoint is currently selected for this obstacle but it has waypoints
+                if (!selectedWaypoint && e.key === 'Tab') {
+                    e.preventDefault(); // Prevent default tab behavior
+                    
+                    // Show all waypoints for this obstacle
+                    selectedObstacle.waypoints.forEach(wp => {
+                        // Create a visual waypoint if it doesn't exist
+                        if (!wp.element) {
+                            const waypointElement = document.createElement('div');
+                            waypointElement.classList.add('waypoint');
+                            waypointElement.style.left = `${wp.x - 5}px`;
+                            waypointElement.style.top = `${wp.y - 5}px`;
+                            waypointElement.style.display = 'block';
+                            frame.appendChild(waypointElement);
+                            wp.element = waypointElement;
+                            
+                            // Setup waypoint interaction
+                            setupWaypoint(waypointElement, wp);
+                        } else {
+                            wp.element.style.display = 'block';
+                        }
+                    });
+                    
+                    // Select the first waypoint
+                    selectedWaypoint = selectedObstacle.waypoints[0];
+                    if (selectedWaypoint.element) {
+                        selectedWaypoint.element.classList.add('selected');
+                    }
+                    
+                    updateSelectionStatus();
+                    return;
+                }
+                
+                // If a waypoint is selected, use arrow keys to move it
+                if (selectedWaypoint && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                    // Calculate movement amount
+                    let dx = 0;
+                    let dy = 0;
+                    
+                    switch (e.key) {
+                        case 'ArrowLeft':
+                            dx = -1;
+                            break;
+                        case 'ArrowRight':
+                            dx = 1;
+                            break;
+                        case 'ArrowUp':
+                            dy = -1;
+                            break;
+                        case 'ArrowDown':
+                            dy = 1;
+                            break;
+                    }
+                    
+                    // Apply larger movement if Shift is held
+                    if (e.shiftKey) {
+                        dx *= 5;
+                        dy *= 5;
+                    }
+                    
+                    // Update waypoint position
+                    selectedWaypoint.x += dx;
+                    selectedWaypoint.y += dy;
+                    
+                    // Apply boundaries
+                    selectedWaypoint.x = Math.max(0, Math.min(selectedWaypoint.x, frame.clientWidth));
+                    selectedWaypoint.y = Math.max(0, Math.min(selectedWaypoint.y, frame.clientHeight));
+                    
+                    // Update waypoint element
+                    if (selectedWaypoint.element) {
+                        selectedWaypoint.element.style.left = `${selectedWaypoint.x - 5}px`;
+                        selectedWaypoint.element.style.top = `${selectedWaypoint.y - 5}px`;
+                    }
+                    
+                    // Update path indicator
+                    updatePathIndicator();
+                    
+                    e.preventDefault(); // Prevent scrolling with arrow keys
+                }
+            }
+        });
+
+        // Prevent the default wheel behavior only when mouse is over a selected object
+        document.addEventListener('wheel', (e) => {
+            // Allow normal scrolling if not over a selected object
+            if (!selectedObstacle && !selectedBlock && !selectedItem && !selectedSquare && !selectedWaypoint) return;
+            
+            // Find the top-level element under the mouse
+            const elementUnderMouse = document.elementFromPoint(e.clientX, e.clientY);
+            
+            // Check if it's a selected object
+            if ((selectedObstacle && elementUnderMouse === selectedObstacle.element) ||
+                (selectedBlock && elementUnderMouse === selectedBlock.element) ||
+                (selectedItem && elementUnderMouse === selectedItem.element) ||
+                (selectedSquare && elementUnderMouse === selectedSquare.element) ||
+                (selectedWaypoint && elementUnderMouse === selectedWaypoint.element)) {
+                // Prevent scrolling when over selected objects
+                e.preventDefault();
+            }
+        }, { passive: false });
+
+        // Event listeners for buttons
+        startBtn.addEventListener('click', () => {
+            if (!animationId && !isGameFinished) {
+                animate();
+                startPressureChecker();
+            }
+        });
+
+        stopBtn.addEventListener('click', () => {
             if (animationId) {
                 cancelAnimationFrame(animationId);
                 animationId = null;
                 stopPressureChecker();
             }
+        });
+
+        resetBtn.addEventListener('click', () => {
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+                animationId = null;
+                stopPressureChecker();
+            }
+            initializeSquares();
             
-            // Move to spawn point
-            selectedSquare.x = selectedSquare.spawnX;
-            selectedSquare.y = selectedSquare.spawnY;
+            // Also exit fullscreen mode if active
+            if (isFullscreen) {
+                toggleFullscreen();
+            }
+        });
+
+        // Add obstacle button handler
+        addObstacleBtn.addEventListener('click', () => {
+            // Toggle add obstacle mode
+            isAddingObstacle = !isAddingObstacle;
             
-            // Update DOM
-            updateSquarePosition(selectedSquare);
-        } else if (!animationId && !isGameFinished) {
-            // Start simulation if no square is selected
-            animate();
-            startPressureChecker();
-        }
-    }
-});
-
-// Prevent the default wheel behavior only when mouse is over a selected object
-document.addEventListener('wheel', (e) => {
-    // Allow normal scrolling if not over a selected object
-    if (!selectedObstacle && !selectedBlock && !selectedItem && !selectedSquare && !selectedWaypoint) return;
-    
-    // Find the top-level element under the mouse
-    const elementUnderMouse = document.elementFromPoint(e.clientX, e.clientY);
-    
-    // Check if it's a selected object
-    if ((selectedObstacle && elementUnderMouse === selectedObstacle.element) ||
-        (selectedBlock && elementUnderMouse === selectedBlock.element) ||
-        (selectedItem && elementUnderMouse === selectedItem.element) ||
-        (selectedSquare && elementUnderMouse === selectedSquare.element) ||
-        (selectedWaypoint && elementUnderMouse === selectedWaypoint.element)) {
-        // Prevent scrolling when over selected objects
-        e.preventDefault();
-    }
-}, { passive: false });
-
-// Event listeners for buttons
-startBtn.addEventListener('click', () => {
-    if (!animationId && !isGameFinished) {
-        animate();
-        startPressureChecker();
-    }
-});
-
-stopBtn.addEventListener('click', () => {
-    if (animationId) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
-        stopPressureChecker();
-    }
-});
-
-resetBtn.addEventListener('click', () => {
-    if (animationId) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
-        stopPressureChecker();
-    }
-    initializeSquares();
-    
-    // Also exit fullscreen mode if active
-    if (isFullscreen) {
-        toggleFullscreen();
-    }
-});
-
-// Add obstacle button handler
-addObstacleBtn.addEventListener('click', () => {
-    // Toggle add obstacle mode
-    isAddingObstacle = !isAddingObstacle;
-    
-    // If enabling, disable other add modes
-    if (isAddingObstacle) {
-        isAddingBlock = false;
-        isAddingItem = false;
-        addBlockBtn.classList.remove('active');
-        addItemBtn.classList.remove('active');
-        blockOptions.style.display = 'none';
-        itemOptions.style.display = 'none';
-    }
-    
-    // Update UI
-    addObstacleBtn.classList.toggle('active', isAddingObstacle);
-    obstacleOptions.style.display = isAddingObstacle ? 'flex' : 'none';
-    
-    // Hide moving options if we're not adding a moving obstacle
-    if (isAddingObstacle && currentObstacleType !== 'moving') {
-        movingObstacleOptions.style.display = 'none';
-    } else if (isAddingObstacle && currentObstacleType === 'moving') {
-        movingObstacleOptions.style.display = 'flex';
-    }
-    
-    // Deselect any selected object when entering add obstacle mode
-    if (isAddingObstacle) {
-        deselectAllObjects();
-    }
-});
-
-// Add block button handler
-addBlockBtn.addEventListener('click', () => {
-    // Toggle add block mode
-    isAddingBlock = !isAddingBlock;
-    
-    // If enabling, disable other add modes
-    if (isAddingBlock) {
-        isAddingObstacle = false;
-        isAddingItem = false;
-        addObstacleBtn.classList.remove('active');
-        addItemBtn.classList.remove('active');
-        obstacleOptions.style.display = 'none';
-        itemOptions.style.display = 'none';
-        movingObstacleOptions.style.display = 'none';
-    }
-    
-    // Update UI
-    addBlockBtn.classList.toggle('active', isAddingBlock);
-    blockOptions.style.display = isAddingBlock ? 'flex' : 'none';
-    
-    // Deselect any selected object when entering add block mode
-    if (isAddingBlock) {
-        deselectAllObjects();
-        
-        // Clear waypoints if any were being set
-        if (isSettingWaypoints) {
-            // Clear waypoints
-            movingWaypoints.forEach(wp => wp.element.remove());
-            movingWaypoints = [];
-            
-            // Clear path indicator
-            if (pathIndicator) {
-                pathIndicator.remove();
-                pathIndicator = null;
+            // If enabling, disable other add modes
+            if (isAddingObstacle) {
+                isAddingBlock = false;
+                isAddingItem = false;
+                addBlockBtn.classList.remove('active');
+                addItemBtn.classList.remove('active');
+                blockOptions.style.display = 'none';
+                itemOptions.style.display = 'none';
             }
             
-            isSettingWaypoints = false;
-            currentMovingObstacle = null;
-        }
-    }
-});
-
-// Add item button handler
-addItemBtn.addEventListener('click', () => {
-    // Toggle add item mode
-    isAddingItem = !isAddingItem;
-    
-    // If enabling, disable other add modes
-    if (isAddingItem) {
-        isAddingObstacle = false;
-        isAddingBlock = false;
-        addObstacleBtn.classList.remove('active');
-        addBlockBtn.classList.remove('active');
-        obstacleOptions.style.display = 'none';
-        blockOptions.style.display = 'none';
-        movingObstacleOptions.style.display = 'none';
-    }
-    
-    // Update UI
-    addItemBtn.classList.toggle('active', isAddingItem);
-    itemOptions.style.display = isAddingItem ? 'flex' : 'none';
-    
-    // Deselect any selected object when entering add item mode
-    if (isAddingItem) {
-        deselectAllObjects();
-        
-        // Clear waypoints if any were being set
-        if (isSettingWaypoints) {
-            // Clear waypoints
-            movingWaypoints.forEach(wp => wp.element.remove());
-            movingWaypoints = [];
+            // Update UI
+            addObstacleBtn.classList.toggle('active', isAddingObstacle);
+            obstacleOptions.style.display = isAddingObstacle ? 'flex' : 'none';
             
-            // Clear path indicator
-            if (pathIndicator) {
-                pathIndicator.remove();
-                pathIndicator = null;
+            // Hide moving options if we're not adding a moving obstacle
+            if (isAddingObstacle && currentObstacleType !== 'moving') {
+                movingObstacleOptions.style.display = 'none';
+            } else if (isAddingObstacle && currentObstacleType === 'moving') {
+                movingObstacleOptions.style.display = 'flex';
             }
             
-            isSettingWaypoints = false;
-            currentMovingObstacle = null;
-        }
-    }
-});
+            // Deselect any selected object when entering add obstacle mode
+            if (isAddingObstacle) {
+                deselectAllObjects();
+            }
+        });
 
-// Clear all button handler
-clearAllBtn.addEventListener('click', () => {
-    // Ask for confirmation
-    if (confirm('Are you sure you want to clear all obstacles, blocks, and items?')) {
-        // Clear obstacles
-        obstacles.forEach(obstacle => obstacle.element.remove());
-        obstacles = [];
-        
-        // Clear blocks
-        blocks.forEach(block => block.element.remove());
-        blocks = [];
-
-        // Clear items
-        items.forEach(item => item.element.remove());
-        items = [];
-        
-        // Clear waypoints
-        movingWaypoints.forEach(wp => wp.element.remove());
-        movingWaypoints = [];
-        
-        // Clear path indicator
-        if (pathIndicator) {
-            pathIndicator.remove();
-            pathIndicator = null;
-        }
-        
-        // Reset state
-        isSettingWaypoints = false;
-        currentMovingObstacle = null;
-        
-        // Reset selection
-        deselectAllObjects();
-        updateSelectionStatus();
-    }
-});
-
-// Obstacle type button handlers
-normalObstacleBtn.addEventListener('click', () => {
-    currentObstacleType = 'normal';
-    normalObstacleBtn.classList.add('active');
-    breakableObstacleBtn.classList.remove('active');
-    movingObstacleBtn.classList.remove('active');
-    
-    // Hide breakable options
-    breakableOptionDiv.style.display = 'none';
-    
-    // Hide moving options
-    movingObstacleOptions.style.display = 'none';
-    
-    // Clear waypoints if any were being set
-    if (isSettingWaypoints) {
-        // Clear waypoints
-        movingWaypoints.forEach(wp => wp.element.remove());
-        movingWaypoints = [];
-        
-        // Clear path indicator
-        if (pathIndicator) {
-            pathIndicator.remove();
-            pathIndicator = null;
-        }
-        
-        isSettingWaypoints = false;
-        currentMovingObstacle = null;
-    }
-});
-
-breakableObstacleBtn.addEventListener('click', () => {
-    currentObstacleType = 'breakable';
-    normalObstacleBtn.classList.remove('active');
-    breakableObstacleBtn.classList.add('active');
-    movingObstacleBtn.classList.remove('active');
-    
-    // Show breakable options
-    breakableOptionDiv.style.display = 'block';
-    
-    // Hide moving options
-    movingObstacleOptions.style.display = 'none';
-    
-    // Clear waypoints if any were being set
-    if (isSettingWaypoints) {
-        // Clear waypoints
-        movingWaypoints.forEach(wp => wp.element.remove());
-        movingWaypoints = [];
-        
-        // Clear path indicator
-        if (pathIndicator) {
-            pathIndicator.remove();
-            pathIndicator = null;
-        }
-        
-        isSettingWaypoints = false;
-        currentMovingObstacle = null;
-    }
-});
-
-movingObstacleBtn.addEventListener('click', () => {
-    currentObstacleType = 'moving';
-    normalObstacleBtn.classList.remove('active');
-    breakableObstacleBtn.classList.remove('active');
-    movingObstacleBtn.classList.add('active');
-    
-    // Hide breakable options
-    breakableOptionDiv.style.display = 'none';
-    
-    // Show moving options
-    movingObstacleOptions.style.display = 'flex';
-});
-
-// Movement type handler
-movementTypeInput.addEventListener('change', () => {
-    currentMovementType = movementTypeInput.value;
-    
-    // Update path indicator if waypoints exist
-    if (movingWaypoints.length > 0) {
-        updatePathIndicator();
-    }
-    
-    // Update current obstacle if one is being configured
-    if (currentMovingObstacle) {
-        currentMovingObstacle.movementType = currentMovementType;
-    }
-});
-
-// Moving speed handler
-movingSpeedInput.addEventListener('input', () => {
-    // Update current obstacle if one is being configured
-    if (currentMovingObstacle) {
-        currentMovingObstacle.speed = parseInt(movingSpeedInput.value) || 3;
-    }
-});
-
-// Square size control buttons
-normalSizeBtn.addEventListener('click', () => {
-    squareSize = NORMAL_SQUARE_SIZE;
-    normalSizeBtn.classList.add('active');
-    smallSizeBtn.classList.remove('active');
-    
-    // Update all squares
-    squareStates.forEach(state => {
-        if (!state.isExploding && !state.isKilled) {
-            state.isSmall = false;
-            state.width = NORMAL_SQUARE_SIZE;
-            state.height = NORMAL_SQUARE_SIZE;
-            state.element.classList.remove('small');
-            updateSquareSize(state);
-        }
-    });
-    
-    // Update spawn points
-    spawnPoints.forEach(spawn => {
-        spawn.style.width = NORMAL_SQUARE_SIZE + 'px';
-        spawn.style.height = NORMAL_SQUARE_SIZE + 'px';
-    });
-});
-
-smallSizeBtn.addEventListener('click', () => {
-    squareSize = SMALL_SQUARE_SIZE;
-    normalSizeBtn.classList.remove('active');
-    smallSizeBtn.classList.add('active');
-    
-    // Update all squares
-    squareStates.forEach(state => {
-        if (!state.isExploding && !state.isKilled) {
-            state.isSmall = true;
-            state.width = SMALL_SQUARE_SIZE;
-            state.height = SMALL_SQUARE_SIZE;
-            state.element.classList.add('small');
-            updateSquareSize(state);
-        }
-    });
-    
-    // Update spawn points
-    spawnPoints.forEach(spawn => {
-        spawn.style.width = SMALL_SQUARE_SIZE + 'px';
-        spawn.style.height = SMALL_SQUARE_SIZE + 'px';
-    });
-});
-
-// Block type buttons
-teleporterBtn.addEventListener('click', () => {
-    currentBlockType = 'teleporter';
-    teleporterBtn.classList.add('active');
-    killerBtn.classList.remove('active');
-    transformerBtn.classList.remove('active');
-    finishlineBtn.classList.remove('active');
-});
-
-killerBtn.addEventListener('click', () => {
-    currentBlockType = 'killer';
-    teleporterBtn.classList.remove('active');
-    killerBtn.classList.add('active');
-    transformerBtn.classList.remove('active');
-    finishlineBtn.classList.remove('active');
-});
-
-transformerBtn.addEventListener('click', () => {
-    currentBlockType = 'transformer';
-    teleporterBtn.classList.remove('active');
-    killerBtn.classList.remove('active');
-    transformerBtn.classList.add('active');
-    finishlineBtn.classList.remove('active');
-});
-
-finishlineBtn.addEventListener('click', () => {
-    currentBlockType = 'finishline';
-    teleporterBtn.classList.remove('active');
-    killerBtn.classList.remove('active');
-    transformerBtn.classList.remove('active');
-    finishlineBtn.classList.add('active');
-});
-
-// Add missing click handler for knife button
-knifeBtn.addEventListener('click', () => {
-    currentItemType = 'knife';
-    knifeBtn.classList.add('active');
-});
-
-// Frame click event for adding obstacles, blocks, items, or waypoints
-frame.addEventListener('click', (e) => {
-    const frameRect = frame.getBoundingClientRect();
-    const x = e.clientX - frameRect.left;
-    const y = e.clientY - frameRect.top;
-    
-    if (isAddingObstacle) {
-        if (currentObstacleType === 'normal') {
-            createObstacle(x, y);
-        } else if (currentObstacleType === 'breakable') {
-            createBreakableObstacle(x, y);
-        } else if (currentObstacleType === 'moving') {
-            if (!isSettingWaypoints) {
-                // Create the moving obstacle first
-                const newObstacle = createMovingObstacle(x, y);
-                currentMovingObstacle = newObstacle;
+        // Add block button handler
+        addBlockBtn.addEventListener('click', () => {
+            // Toggle add block mode
+            isAddingBlock = !isAddingBlock;
+            
+            // If enabling, disable other add modes
+            if (isAddingBlock) {
+                isAddingObstacle = false;
+                isAddingItem = false;
+                addObstacleBtn.classList.remove('active');
+                addItemBtn.classList.remove('active');
+                obstacleOptions.style.display = 'none';
+                itemOptions.style.display = 'none';
+                movingObstacleOptions.style.display = 'none';
+            }
+            
+            // Update UI
+            addBlockBtn.classList.toggle('active', isAddingBlock);
+            blockOptions.style.display = isAddingBlock ? 'flex' : 'none';
+            
+            // Deselect any selected object when entering add block mode
+            if (isAddingBlock) {
+                deselectAllObjects();
                 
-                // Start setting waypoints
-                isSettingWaypoints = true;
-                
-                // Clear existing waypoints
-                movingWaypoints = [];
-            } else {
-                // Add waypoint for the existing moving obstacle
-                createWaypoint(x, y);
-                
-                // If we have enough waypoints, finalize the obstacle setup
-                if (movingWaypoints.length >= 2) {
-                    // Set waypoints on the obstacle
-                    currentMovingObstacle.waypoints = movingWaypoints.slice();
+                // Clear waypoints if any were being set
+                if (isSettingWaypoints) {
+                    // Clear waypoints
+                    movingWaypoints.forEach(wp => wp.element.remove());
+                    movingWaypoints = [];
                     
-                    // Hide the waypoints after setup
-                    movingWaypoints.forEach(wp => {
-                        wp.element.style.display = 'none';
-                    });
-                    
-                    // Reset state
-                    isSettingWaypoints = false;
-                    currentMovingObstacle = null;
-                    
-                    // Clear path indicator (it's no longer needed after setup)
+                    // Clear path indicator
                     if (pathIndicator) {
                         pathIndicator.remove();
                         pathIndicator = null;
                     }
                     
-                    // Reset waypoints array for next obstacle
-                    movingWaypoints = [];
+                    isSettingWaypoints = false;
+                    currentMovingObstacle = null;
                 }
             }
-        }
-    } else if (isAddingBlock) {
-        createBlock(x, y, currentBlockType);
-    } else if (isAddingItem) {
-        const itemSize = parseInt(itemSizeInput.value) || KNIFE_SIZE;
-        createItem(x - itemSize/2, y - itemSize/2, currentItemType, itemSize);
-    }
-});
+        });
 
-// Make initial obstacle interactive
-setupObstacleInteraction(initialObstacle, obstacles[0]);
+        // Add item button handler
+        addItemBtn.addEventListener('click', () => {
+            // Toggle add item mode
+            isAddingItem = !isAddingItem;
+            
+            // If enabling, disable other add modes
+            if (isAddingItem) {
+                isAddingObstacle = false;
+                isAddingBlock = false;
+                addObstacleBtn.classList.remove('active');
+                addBlockBtn.classList.remove('active');
+                obstacleOptions.style.display = 'none';
+                blockOptions.style.display = 'none';
+                movingObstacleOptions.style.display = 'none';
+            }
+            
+            // Update UI
+            addItemBtn.classList.toggle('active', isAddingItem);
+            itemOptions.style.display = isAddingItem ? 'flex' : 'none';
+            
+            // Deselect any selected object when entering add item mode
+            if (isAddingItem) {
+                deselectAllObjects();
+                
+                // Clear waypoints if any were being set
+                if (isSettingWaypoints) {
+                    // Clear waypoints
+                    movingWaypoints.forEach(wp => wp.element.remove());
+                    movingWaypoints = [];
+                    
+                    // Clear path indicator
+                    if (pathIndicator) {
+                        pathIndicator.remove();
+                        pathIndicator = null;
+                    }
+                    
+                    isSettingWaypoints = false;
+                    currentMovingObstacle = null;
+                }
+            }
+        });
 
-// Setup square interaction
-squareStates.forEach((state, index) => {
-    setupSquareInteraction(state.element, state, index);
-});
+        // Clear all button handler
+        clearAllBtn.addEventListener('click', () => {
+            // Ask for confirmation
+            if (confirm('Are you sure you want to clear all obstacles, blocks, and items?')) {
+                // Clear obstacles
+                obstacles.forEach(obstacle => obstacle.element.remove());
+                obstacles = [];
+                
+                // Clear blocks
+                blocks.forEach(block => block.element.remove());
+                blocks = [];
 
-// Initialize the game - ensure squares are at their spawn points
-initializeSquares();
+                // Clear items
+                items.forEach(item => item.element.remove());
+                items = [];
+                
+                // Clear waypoints
+                movingWaypoints.forEach(wp => wp.element.remove());
+                movingWaypoints = [];
+                
+                // Clear path indicator
+                if (pathIndicator) {
+                    pathIndicator.remove();
+                    pathIndicator = null;
+                }
+                
+                // Reset state
+                isSettingWaypoints = false;
+                currentMovingObstacle = null;
+                
+                // Reset selection
+                deselectAllObjects();
+                updateSelectionStatus();
+            }
+        });
 
-// Make sure to move squares to their spawn positions initially
-moveSquaresToSpawn();
-</script>
+        // Obstacle type button handlers
+        normalObstacleBtn.addEventListener('click', () => {
+            currentObstacleType = 'normal';
+            normalObstacleBtn.classList.add('active');
+            breakableObstacleBtn.classList.remove('active');
+            movingObstacleBtn.classList.remove('active');
+            
+            // Hide breakable options
+            breakableOptionDiv.style.display = 'none';
+            
+            // Hide moving options
+            movingObstacleOptions.style.display = 'none';
+            
+            // Clear waypoints if any were being set
+            if (isSettingWaypoints) {
+                // Clear waypoints
+                movingWaypoints.forEach(wp => wp.element.remove());
+                movingWaypoints = [];
+                
+                // Clear path indicator
+                if (pathIndicator) {
+                    pathIndicator.remove();
+                    pathIndicator = null;
+                }
+                
+                isSettingWaypoints = false;
+                currentMovingObstacle = null;
+            }
+        });
+
+        breakableObstacleBtn.addEventListener('click', () => {
+            currentObstacleType = 'breakable';
+            normalObstacleBtn.classList.remove('active');
+            breakableObstacleBtn.classList.add('active');
+            movingObstacleBtn.classList.remove('active');
+            
+            // Show breakable options
+            breakableOptionDiv.style.display = 'block';
+            
+            // Hide moving options
+            movingObstacleOptions.style.display = 'none';
+            
+            // Clear waypoints if any were being set
+            if (isSettingWaypoints) {
+                // Clear waypoints
+                movingWaypoints.forEach(wp => wp.element.remove());
+                movingWaypoints = [];
+                
+                // Clear path indicator
+                if (pathIndicator) {
+                    pathIndicator.remove();
+                    pathIndicator = null;
+                }
+                
+                isSettingWaypoints = false;
+                currentMovingObstacle = null;
+            }
+        });
+
+        movingObstacleBtn.addEventListener('click', () => {
+            currentObstacleType = 'moving';
+            normalObstacleBtn.classList.remove('active');
+            breakableObstacleBtn.classList.remove('active');
+            movingObstacleBtn.classList.add('active');
+            
+            // Hide breakable options
+            breakableOptionDiv.style.display = 'none';
+            
+            // Show moving options
+            movingObstacleOptions.style.display = 'flex';
+        });
+
+        // Movement type handler
+        movementTypeInput.addEventListener('change', () => {
+            currentMovementType = movementTypeInput.value;
+            
+            // Update path indicator if waypoints exist
+            if (movingWaypoints.length > 0) {
+                updatePathIndicator();
+            }
+            
+            // Update current obstacle if one is being configured
+            if (currentMovingObstacle) {
+                currentMovingObstacle.movementType = currentMovementType;
+            }
+        });
+
+        // Moving speed handler
+        movingSpeedInput.addEventListener('input', () => {
+            // Update current obstacle if one is being configured
+            if (currentMovingObstacle) {
+                currentMovingObstacle.speed = parseInt(movingSpeedInput.value) || 3;
+            }
+        });
+
+        // Square size control buttons
+        normalSizeBtn.addEventListener('click', () => {
+            squareSize = NORMAL_SQUARE_SIZE;
+            normalSizeBtn.classList.add('active');
+            smallSizeBtn.classList.remove('active');
+            
+            // Update all squares
+            squareStates.forEach(state => {
+                if (!state.isExploding && !state.isKilled) {
+                    state.isSmall = false;
+                    state.width = NORMAL_SQUARE_SIZE;
+                    state.height = NORMAL_SQUARE_SIZE;
+                    state.element.classList.remove('small');
+                    updateSquareSize(state);
+                }
+            });
+            
+            // Update spawn points
+            spawnPoints.forEach(spawn => {
+                spawn.style.width = NORMAL_SQUARE_SIZE + 'px';
+                spawn.style.height = NORMAL_SQUARE_SIZE + 'px';
+            });
+        });
+
+        smallSizeBtn.addEventListener('click', () => {
+            squareSize = SMALL_SQUARE_SIZE;
+            normalSizeBtn.classList.remove('active');
+            smallSizeBtn.classList.add('active');
+            
+            // Update all squares
+            squareStates.forEach(state => {
+                if (!state.isExploding && !state.isKilled) {
+                    state.isSmall = true;
+                    state.width = SMALL_SQUARE_SIZE;
+                    state.height = SMALL_SQUARE_SIZE;
+                    state.element.classList.add('small');
+                    updateSquareSize(state);
+                }
+            });
+            
+            // Update spawn points
+            spawnPoints.forEach(spawn => {
+                spawn.style.width = SMALL_SQUARE_SIZE + 'px';
+                spawn.style.height = SMALL_SQUARE_SIZE + 'px';
+            });
+        });
+
+        // Block type buttons
+        teleporterBtn.addEventListener('click', () => {
+            currentBlockType = 'teleporter';
+            teleporterBtn.classList.add('active');
+            killerBtn.classList.remove('active');
+            transformerBtn.classList.remove('active');
+            finishlineBtn.classList.remove('active');
+        });
+
+        killerBtn.addEventListener('click', () => {
+            currentBlockType = 'killer';
+            teleporterBtn.classList.remove('active');
+            killerBtn.classList.add('active');
+            transformerBtn.classList.remove('active');
+            finishlineBtn.classList.remove('active');
+        });
+
+        transformerBtn.addEventListener('click', () => {
+            currentBlockType = 'transformer';
+            teleporterBtn.classList.remove('active');
+            killerBtn.classList.remove('active');
+            transformerBtn.classList.add('active');
+            finishlineBtn.classList.remove('active');
+        });
+
+        finishlineBtn.addEventListener('click', () => {
+            currentBlockType = 'finishline';
+            teleporterBtn.classList.remove('active');
+            killerBtn.classList.remove('active');
+            transformerBtn.classList.remove('active');
+            finishlineBtn.classList.add('active');
+        });
+
+        // Add missing click handler for knife button
+        knifeBtn.addEventListener('click', () => {
+            currentItemType = 'knife';
+            knifeBtn.classList.add('active');
+        });
+
+        // Frame click event for adding obstacles, blocks, items, or waypoints
+        frame.addEventListener('click', (e) => {
+            const frameRect = frame.getBoundingClientRect();
+            const x = e.clientX - frameRect.left;
+            const y = e.clientY - frameRect.top;
+            
+            if (isAddingObstacle) {
+                if (currentObstacleType === 'normal') {
+                    createObstacle(x, y);
+                } else if (currentObstacleType === 'breakable') {
+                    createBreakableObstacle(x, y);
+                } else if (currentObstacleType === 'moving') {
+                    if (!isSettingWaypoints) {
+                        // Create the moving obstacle first
+                        const newObstacle = createMovingObstacle(x, y);
+                        currentMovingObstacle = newObstacle;
+                        
+                        // Start setting waypoints
+                        isSettingWaypoints = true;
+                        
+                        // Clear existing waypoints
+                        movingWaypoints = [];
+                    } else {
+                        // Add waypoint for the existing moving obstacle
+                        createWaypoint(x, y);
+                        
+                        // If we have enough waypoints, finalize the obstacle setup
+                        if (movingWaypoints.length >= 2) {
+                            // Set waypoints on the obstacle
+                            currentMovingObstacle.waypoints = movingWaypoints.slice();
+                            
+                            // Hide the waypoints after setup
+                            movingWaypoints.forEach(wp => {
+                                wp.element.style.display = 'none';
+                            });
+                            
+                            // Reset state
+                            isSettingWaypoints = false;
+                            currentMovingObstacle = null;
+                            
+                            // Clear path indicator (it's no longer needed after setup)
+                            if (pathIndicator) {
+                                pathIndicator.remove();
+                                pathIndicator = null;
+                            }
+                            
+                            // Reset waypoints array for next obstacle
+                            movingWaypoints = [];
+                        }
+                    }
+                }
+            } else if (isAddingBlock) {
+                createBlock(x, y, currentBlockType);
+            } else if (isAddingItem) {
+                const itemSize = parseInt(itemSizeInput.value) || KNIFE_SIZE;
+                createItem(x - itemSize/2, y - itemSize/2, currentItemType, itemSize);
+            }
+        });
+
+        // Make initial obstacle interactive
+        setupObstacleInteraction(initialObstacle, obstacles[0]);
+
+        // Setup square interaction
+        squareStates.forEach((state, index) => {
+            setupSquareInteraction(state.element, state, index);
+        });
+
+       // Initialize the game - ensure squares are at their spawn points
+        initializeSquares();
+        
+        // Make sure to move squares to their spawn positions initially
+        moveSquaresToSpawn();
+    </script>
 </body>
 </html>
